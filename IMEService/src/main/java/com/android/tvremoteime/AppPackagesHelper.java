@@ -91,8 +91,9 @@ public class AppPackagesHelper {
 
     public static List<AppInfo> queryAppInfo(Context context, boolean containSysApp){
         PackageManager pm = context.getPackageManager();
+        // 注意：不能用 MATCH_UNINSTALLED_PACKAGES，否则会把「已卸载但保留数据」的应用也列出来（幽灵条目）
         List<ApplicationInfo> listAppcations = pm
-                .getInstalledApplications(PackageManager.MATCH_UNINSTALLED_PACKAGES);
+                .getInstalledApplications(0);
         List<AppInfo> appInfos = new ArrayList<AppInfo>();
         for (ApplicationInfo app : listAppcations) {
             if(containSysApp || (app.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
