@@ -193,8 +193,10 @@ Log.i(TAG, "Screen size: " + screenWidth + "x" + screenHeight);
             }
         });
 
-        // 重置自动隐藏计时器
-        resetHideTimer();
+        // 仅在真实移动时重置/唤醒光标；dx、dy 均为 0 的空移动（如状态探测）不应延长显示时间
+        if (dx != 0 || dy != 0) {
+            resetHideTimer();
+        }
 
         return new int[]{mouseX, mouseY};
     }

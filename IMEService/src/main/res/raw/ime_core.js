@@ -699,9 +699,8 @@ function onTouchpadEnd(e) {
 function mouseMove(dx, dy) {
 	if (dx === 0 && dy === 0) return;
 	$.post("/mouse/move", { dx: dx, dy: dy }, function(data) {
-		if (data && data.indexOf('ok:') === 0) {
-			var pos = data.substring(3).split(',');
-			$('#mouse-pos').text('位置: ' + pos[0] + ', ' + pos[1]);
+		if (data && data.status === 'ok') {
+			$('#mouse-pos').text('位置: ' + data.x + ', ' + data.y);
 		}
 	});
 }
@@ -710,15 +709,15 @@ function mouseMove(dx, dy) {
 function mouseClick(button) {
 	$.post("/mouse/click", { button: button }, function(data) {
 		console.log('click:', data);
-		if (data === 'ok') {
+		if (data && data.status === 'ok') {
 			// 视觉反馈
 			var btnId = button === 0 ? '#mouse-left' : (button === 1 ? '#mouse-right' : '#mouse-middle');
 			$(btnId).css('transform', 'scale(0.95)');
 			setTimeout(function() {
 				$(btnId).css('transform', '');
 			}, 100);
-		} else if (data && data.indexOf('error:') === 0) {
-			$('#adb-status').text('ADB: 未连接').removeClass('connected').addClass('disconnected');
+		} else if (data && data.status === 'error') {
+			$('#adb-status').text('触控服务: 异常').removeClass('connected').addClass('disconnected');
 		}
 	});
 }
@@ -773,16 +772,18 @@ function mouseLongClick() {
 	});
 }
 
-// 检查 ADB 状态
+// 检查触控服务状态
+// 注意：必须使用只读的 /mouse/status，不能用 /mouse/move——后者会重置光标自动隐藏计时器，
+// 导致已隐藏的光标被周期性唤醒而「长时间显示」
 function checkAdbStatus() {
-	$.post("/mouse/move", { dx: 0, dy: 0 }, function(data) {
-		if (data && data.indexOf('ok:') === 0) {
-			$('#adb-status').text('ADB: 已连接').removeClass('disconnected').addClass('connected');
+	$.get("/mouse/status", function(data) {
+		if (data && data.serviceEnabled) {
+			$('#adb-status').text('触控服务: 已启用').removeClass('disconnected').addClass('connected');
 		} else {
-			$('#adb-status').text('ADB: 未连接').removeClass('connected').addClass('disconnected');
+			$('#adb-status').text('触控服务: 未启用').removeClass('connected').addClass('disconnected');
 		}
 	}).fail(function() {
-		$('#adb-status').text('ADB: 未连接').removeClass('connected').addClass('disconnected');
+		$('#adb-status').text('触控服务: 未启用').removeClass('connected').addClass('disconnected');
 	});
 }
 
