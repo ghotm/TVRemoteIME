@@ -68,8 +68,9 @@ freeline_project_description.json
 #IMEService
 #IMEService/
 
-#raw
-raw/
+#raw 资源目录必须纳入版本控制（代码引用 R.raw.* 编译依赖），不再忽略
+#raw/
+# 注：原规则 raw/ 曾导致 IMEService/src/main/res/raw 下资源（jquery_min.js、keys.png、ic_dl_*.png、tv）从未入库，CI 全新检出后编译失败
 
 # Scripts and temp files
 *.bat
