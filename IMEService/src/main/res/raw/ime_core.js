@@ -1,5 +1,7 @@
-var isSupportTouch = "ontouchend" in document ? true : false;
-var processbar1=$("#processbar1");
+// 特性检测不可靠（现代浏览器均含 ontouchend 接口），改为同时支持触摸与鼠标/遥控器（click）
+var isSupportTouch = ("ontouchstart" in window) || (navigator.maxTouchPoints > 0);
+// 鼠标/触摸按下后浏览器会补发 click，用此时间戳避免重复发送
+var suppressClickTime = 0;
 var processbar2=$("#processbar2");
 var tabs = $('.tab-content');
 var keyActionTimer = null;
@@ -356,17 +358,23 @@ $("button.tab, div.tab").on("click", function(){
 $("#btnCls").on("click",function(){
 	postKeyCode($(this).attr("data-key"))
 })
-// 方向键 - 支持长按重复发送
-$(".direction-btn, .direction, #btnDel").on(isSupportTouch ? "touchstart" : "mousedown",function(){
+// 方向键 - 支持长按重复发送，同时兼容触摸与鼠标/遥控器（click）
+$(".direction-btn, .direction, #btnDel").on("mousedown touchstart",function(){
 		var o=$(this);
+		suppressClickTime = +new Date() + 600;
 		$("#direction-btns").css({"background-position":o.attr("data-bp")});
 		postKeyActionCode(o.attr("data-key"), 1);
 		console.log("onkeydown:" + o.attr("data-key"));
 })
-$(".direction-btn, .direction, #btnDel").on(isSupportTouch ? "touchend" : "mouseup",function(){
+$(".direction-btn, .direction, #btnDel").on("mouseup touchend touchcancel",function(){
 		var o=$(this);
 		postKeyActionCode(o.attr("data-key"), 2);
 		console.log("onkeyup:" + o.attr("data-key"));
+})
+// 方向键点击兜底：遥控器/键盘 Enter 直接触发 click（无 mousedown/touchstart）
+$(".direction-btn, .direction, #btnDel").on("click",function(){
+		if(+new Date() < suppressClickTime) return;
+		postKeyCode($(this).attr("data-key"));
 })
 // 控制按钮（返回、菜单、主页、音量等）- 使用click事件发送单次按键
 $(".control-btn").on("click", function(){
@@ -375,14 +383,20 @@ $(".control-btn").on("click", function(){
 	console.log("control-btn click:" + keyCode);
 	postKeyCode(keyCode);
 })
-$(".otherbtn").on(isSupportTouch ? "touchstart" : "mousedown", function() {
+$(".otherbtn").on("mousedown touchstart", function() {
 	var o = $(this);
+	suppressClickTime = +new Date() + 600;
 	o.css({
 		"background-position": o.attr("data-bp")
 	});
 	postKeyCode(o.attr("data-key"));
 })
-$(".direction-btn,.direction,.otherbtn").on(isSupportTouch ? "touchend touchmove" : "mouseup mousemove", function() {
+// 其他按钮点击兜底：遥控器/键盘 Enter 直接触发 click
+$(".otherbtn").on("click", function() {
+	if(+new Date() < suppressClickTime) return;
+	postKeyCode($(this).attr("data-key"));
+})
+$(".direction-btn,.direction,.otherbtn").on("mouseup touchend touchcancel touchmove mouseleave", function() {
 	$("#direction-btns,.direction-btn,.direction,.otherbtn").css({
 		"background-position": ""
 	});
@@ -518,10 +532,9 @@ $("#btnInstallApk").on("click", function(){
 });
 /* ========== == ========== */
 
-$("#btnUpload").on("click", function(){ $("#upfile")[0].click(); });
 $("#btnUpload2").on("click", function(){ $("#upfile2")[0].click(); });
 
-$("#upfile,#upfile2,#upfile3").change(function() {
+$("#upfile2,#upfile3").change(function() {
 	var id = this.id;
 	var formData = new FormData;
 	var file = this.files[0];
@@ -529,15 +542,11 @@ $("#upfile,#upfile2,#upfile3").change(function() {
 	if(id == "upfile2"){
 		formData.append("path", curPath);
 		processbar = processbar2;
-	}else if(id == "upfile"){
-		formData.append("autoInstall", $('#cbAutoInstall')[0].checked);
-		formData.append("useSystem", $('#playUseSystem')[0].checked);
-		processbar = processbar1;
 	}
 	formData.append("file", file, encodeURI(file.uploadName || file.name));
 	$.ajax({
 		type: "POST",
-		url: id == "upfile2" ? "/file/upload" : (id == "upfile3" ? "/torrent/upload" : "/upload"),
+		url: id == "upfile2" ? "/file/upload" : "/torrent/upload",
 		dataType: "json",
 		data: formData,
 		processData: false,
@@ -572,12 +581,6 @@ $("#upfile,#upfile2,#upfile3").change(function() {
 				}else if(id == "upfile3"){
 					alert("种子文件已上传并解析，请选择要播放的视频文件。");
 					addTorrentItems(data);
-				}else{
-					if($('#cbAutoInstall')[0].checked && file.name.indexOf(".apk") != -1){
-						alert("APK包已传送到TV盒子并执行安装，请留意TV屏幕的安装请求。");
-					}else{
-						alert("文件已成功传送到TV盒子，存储于：" + data.filePath);
-					}
 				}
 			}else{
 				alert("抱歉，文件上传失败！");
