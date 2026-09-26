@@ -124,7 +124,7 @@ function postFileAction(action){
 			if("ok"==data){
 				selectedPaths = [];
 				fileOperItems.empty();
-				$('.file-oper').addClass('hide');
+				$('.file-operations').addClass('hide');
 				selectedPathId = 0;
 				setTimeout(function(){
 					loadFileList(curPath);
@@ -172,7 +172,6 @@ function loadFileList(path){
 		var fileList=$(".file-list");
 		fileList.empty();
 		var html=[];
-		var fileDeleteChecked = $("#cbFileSelect")[0].checked;
 		if(data.parent != undefined){
 			html.push('<div class="file-item"><div class="file-icon-panel">');
 			html.push('<img src="/ic_dl_folder.png" class="file-icon" onclick="loadFileList(\''+data.parent+'\');" />');
@@ -185,7 +184,7 @@ function loadFileList(path){
 			html.push('<img src="/ic_dl_folder.png" class="file-icon" onclick="loadFileList(\''+file.path+'\');" />');
 			html.push('</div><div class="file-name">'+file.name+'</div>');
 			html.push('<div class="app-btn">');
-			html.push('<input type="button" value="选择" class="fbtn2 app-btn1' + (fileDeleteChecked ? '' : ' hide') + '" onclick="addFile(1,\''+file.name+'\',\''+file.path+'\');" />');
+			html.push('<input type="button" value="选择" class="fbtn2 app-btn1" onclick="addFile(1,\''+file.name+'\',\''+file.path+'\');" />');
 			html.push("</div>");
 			html.push('</div>');
 		}
@@ -200,10 +199,10 @@ function loadFileList(path){
 			html.push('<div class="' + (file.isMedia ? 'media-size' : 'file-size') + '">' + formatSize(file.size) + '</div>');
 			html.push('</div><div class="file-name">'+file.name+'</div>');
 			html.push('<div class="app-btn">');
-			html.push('<a href="/file/download/' + file.path + '" target="_blank" class="' + (fileDeleteChecked ? ' hide' : '') + '">');
+			html.push('<a href="/file/download/' + file.path + '" target="_blank" class="">');
 			html.push('<input type="button" value="下载" class="fbtn1 app-btn1" />');	
 			html.push("</a>");
-			html.push('\t  <input type="button" value="选择" class="fbtn2 app-btn1' + (fileDeleteChecked ? '' : ' hide') + '" onclick="addFile(2,\''+file.name+'\',\''+file.path+'\');" />');
+			html.push('\t  <input type="button" value="选择" class="fbtn2 app-btn1" onclick="addFile(2,\''+file.name+'\',\''+file.path+'\');" />');
 			html.push("</div>");
 			html.push('</div>');
 		}
@@ -227,7 +226,7 @@ function addFile(type, name, path){
 	html.push(name);
 	html.push('</div><div class="file-oper-del">X</div></div>');
 	fileOperItems.append(html.join(''));
-	$('.file-oper').removeClass('hide');
+	$('.file-operations').removeClass('hide');
 }
 function removeFile(id, path){
 	var rid = -1;
@@ -243,7 +242,7 @@ function removeFile(id, path){
 	$('#fileOperItem' + id).remove();
 	if(selectedPaths.length == 0){
 		selectedPathId = 0;
-		$('.file-oper').addClass('hide');
+		$('.file-operations').addClass('hide');
 	}
 }
 function loadTVList(){
