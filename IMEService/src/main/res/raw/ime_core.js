@@ -428,6 +428,10 @@ $("#btnClear").on("click", function() {
 		})
 	}
 })
+// 上传按钮点击 → 触发对应的文件选择 input（input 通过样式隐藏，需按钮触发）
+$("#btnUpload").on("click", function(){ $("#upfile")[0].click(); });
+$("#btnUpload2").on("click", function(){ $("#upfile2")[0].click(); });
+
 $("#upfile,#upfile2,#upfile3").change(function() {
 	var id = this.id;
 	var formData = new FormData;
