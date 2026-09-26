@@ -21,6 +21,7 @@ import java.util.Comparator;
 import java.util.Map;
 
 import fi.iki.elonen.NanoHTTPD;
+import com.android.tvremoteime.AppPackagesHelper;
 import com.android.tvremoteime.util.FileUtils;
 
 /**
@@ -48,6 +49,7 @@ public class FileRequestProcesser  implements RequestProcesser {
                 case "/file/cut":
                 case "/file/delete":
                 case "/file/upload":
+                case "/file/install":
                     return true;
             }
         }
@@ -83,6 +85,11 @@ public class FileRequestProcesser  implements RequestProcesser {
                     return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.OK, "ok");
                 case "/file/upload":
                     return uploadFile(params, files);
+                case "/file/install":
+                    if (!TextUtils.isEmpty(paths)) {
+                        batchInstallApk(paths);
+                    }
+                    return RemoteServer.createJSONResponse(NanoHTTPD.Response.Status.OK, "{\"success\":true}");
             }
         }
         return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.NOT_FOUND, "Error 404, file not found.");
@@ -238,6 +245,22 @@ public class FileRequestProcesser  implements RequestProcesser {
                 if (source != null) {
                     RemoteServerFileManager.cutFile(source, targetPathFile);
                 }
+            }
+        }
+    }
+
+    /**
+     * 批量安装选中的 APK 文件（仅安装 .apk 后缀的文件）
+     */
+    private void batchInstallApk(String paths){
+        String[] pathData = paths.split("\\|");
+        for(String p : pathData){
+            if(TextUtils.isEmpty(p)) continue;
+            if(!p.toLowerCase().endsWith(".apk")) continue;
+            // Validate path to prevent path traversal
+            File file = securityManager.getSafeFile(p);
+            if (file != null && file.exists()) {
+                AppPackagesHelper.installPackage(file, context);
             }
         }
     }

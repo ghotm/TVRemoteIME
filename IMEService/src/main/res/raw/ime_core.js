@@ -133,6 +133,36 @@ function postFileAction(action){
 		});
 	}
 }
+function postInstallApk(){
+	if(selectedPaths.length == 0) return;
+
+	var apkPaths = [];
+	for(var i=0;i<selectedPaths.length;i++){
+		var p = selectedPaths[i];
+		if(p && /\.apk$/i.test(p)){
+			apkPaths.push(p);
+		}
+	}
+	if(apkPaths.length == 0){
+		alert("选中的文件中没有 APK 文件！");
+		return;
+	}
+	if(!confirm("是否确认安装选中的 " + apkPaths.length + " 个 APK 文件？"))return;
+	$.post("/file/install",{paths:apkPaths.join('|')},function(data){
+		if(data && data.success){
+			alert("已发起安装，请留意电视屏幕上的安装确认。");
+			selectedPaths = [];
+			fileOperItems.empty();
+			$('.file-operations').addClass('hidden');
+			selectedPathId = 0;
+			setTimeout(function(){
+				loadFileList(curPath);
+			},1000);
+		}else{
+			alert("安装失败！");
+		}
+	});
+}
 function getDiskSpace(){
 	$.get("/sdcard_stat", null, function(data){
 		$('#diskSpace').html('存储总容量：' + formatSize(data.totalBytes) + '，可用容量：' + formatSize(data.availableBytes));
@@ -158,9 +188,6 @@ function reloadAppList(){
 			}
 			html.push("</div>");
 			html.push("</div>");
-		}
-		for(i=0;i<3;i++){
-			html.push('<div class="app-item item-empty"></div>');
 		}
 		appList.html(html.join("\r\n"));
 	});
@@ -205,9 +232,6 @@ function loadFileList(path){
 			html.push('\t  <input type="button" value="选择" class="fbtn2 app-btn1" onclick="addFile(2,\''+file.name+'\',\''+file.path+'\');" />');
 			html.push("</div>");
 			html.push('</div>');
-		}
-		for(i=0;i<4;i++){
-			html.push('<div class="file-item item-empty"></div>');
 		}
 		fileList.html(html.join("\r\n"));
 	});
