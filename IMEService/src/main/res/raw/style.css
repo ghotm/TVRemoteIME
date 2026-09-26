@@ -417,9 +417,6 @@ body {
 }
 
 .btn-primary {
-	position: absolute;
-	right: 8px;
-	top: 8px;
 	padding: 8px 16px;
 	background: var(--color-primary);
 	color: white;
@@ -429,6 +426,13 @@ body {
 	font-weight: 500;
 	cursor: pointer;
 	transition: all var(--transition-fast);
+}
+
+/* 「输入」按钮（#confirm）贴在输入框右上角（.input-wrapper 为相对定位容器） */
+#confirm {
+	position: absolute;
+	right: 8px;
+	top: 8px;
 }
 
 .btn-primary:hover {
