@@ -44,7 +44,7 @@ public class UploadRequestProcesser implements RequestProcesser {
                 // 将上传的临时文件移动到公共下载目录，避免落在应用私有目录导致用户在其他文件管理器中找不到
                 localFilename = moveToDownloadDir(localFilename, uploadFileName);
                 if(autoInstall) {
-                    if (localFilename.endsWith(".apk")) {
+                    if (localFilename.toLowerCase().endsWith(".apk")) {
                         //执行安装
                         AppPackagesHelper.installPackage(new File(localFilename), this.context);
                     }

@@ -445,7 +445,7 @@ $("#btnInstallApk").on("click", function(){
 	if(!apkInstallFile){ alert("请先选择要上传的 APK 文件"); return; }
 	var autoInstall = $("#cbAutoInstallApk").is(":checked");
 	$("#apkProgressWrap").removeClass("hidden");
-	$("#processbar1").css("width", "1%");
+	$("#processbarApk").css("width", "1%");
 	$("#apkProgressWrap .progress-text").text("0%");
 	$("#uploadStatus").text("正在上传…");
 	var formData = new FormData();
@@ -463,7 +463,7 @@ $("#btnInstallApk").on("click", function(){
 				xhr.upload.onprogress = function(e){
 					if(e.lengthComputable){
 						var pct = Math.floor(100 * e.loaded / e.total);
-						$("#processbar1").css("width", pct + "%");
+						$("#processbarApk").css("width", pct + "%");
 						$("#apkProgressWrap .progress-text").text(pct + "%");
 						$("#uploadStatus").text("正在上传… " + pct + "%");
 					}
@@ -473,7 +473,7 @@ $("#btnInstallApk").on("click", function(){
 		},
 		success: function(data){
 			if(data && data.success){
-				$("#processbar1").css("width", "100%");
+				$("#processbarApk").css("width", "100%");
 				$("#apkProgressWrap .progress-text").text("100%");
 				if(data.filePath && data.filePath.toLowerCase().indexOf(".apk") != -1 && autoInstall){
 					$("#uploadStatus").text("上传成功，已发起安装！请留意电视屏幕上的安装确认。");
