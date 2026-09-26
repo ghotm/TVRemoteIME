@@ -185,6 +185,9 @@ public class FileRequestProcesser  implements RequestProcesser {
                         localFile.delete();
                     }
                 }
+                if (r) {
+                    scanFileToMediaStore(saveFilename.getAbsolutePath());
+                }
             }
         }
         return RemoteServer.createJSONResponse(NanoHTTPD.Response.Status.OK,  "{\"success\":" + (r ? "true": "false") + "}");
@@ -231,6 +234,7 @@ public class FileRequestProcesser  implements RequestProcesser {
                 }
             }
         }
+        scanDirToMediaStore(targetPathFile);
     }
     private void batchCutFile(String targetPath, String paths){
         // Validate target path
@@ -247,6 +251,7 @@ public class FileRequestProcesser  implements RequestProcesser {
                 }
             }
         }
+        scanDirToMediaStore(targetPathFile);
     }
 
     /**
@@ -262,6 +267,37 @@ public class FileRequestProcesser  implements RequestProcesser {
             if (file != null && file.exists()) {
                 AppPackagesHelper.installPackage(file, context);
             }
+        }
+    }
+
+    /**
+     * 通知 MediaScanner 扫描文件，使其写入 MediaStore 索引。
+     * Android 11 分区存储下，应用通过 File API 写入公共目录的文件不会被自动索引，
+     * 其他文件管理器（如 MiXplorer）通过 FUSE 将看不到该文件，扫描后即可见。
+     */
+    private void scanFileToMediaStore(String path) {
+        try {
+            android.media.MediaScannerConnection.scanFile(context, new String[]{path}, null, null);
+        } catch (Exception e) {
+            android.util.Log.e("FileRequestProcesser", "通知媒体扫描失败: " + path, e);
+        }
+    }
+
+    /**
+     * 扫描目录下的所有文件（用于复制/剪切后，使新文件对其他应用可见）
+     */
+    private void scanDirToMediaStore(File dir) {
+        if (dir == null || !dir.isDirectory()) return;
+        File[] files = dir.listFiles();
+        if (files == null || files.length == 0) return;
+        String[] paths = new String[files.length];
+        for (int i = 0; i < files.length; i++) {
+            paths[i] = files[i].getAbsolutePath();
+        }
+        try {
+            android.media.MediaScannerConnection.scanFile(context, paths, null, null);
+        } catch (Exception e) {
+            android.util.Log.e("FileRequestProcesser", "通知媒体扫描失败: " + dir.getAbsolutePath(), e);
         }
     }
 }

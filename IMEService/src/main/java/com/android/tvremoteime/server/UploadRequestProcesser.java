@@ -80,6 +80,7 @@ public class UploadRequestProcesser implements RequestProcesser {
                 dest = new File(targetDir, System.currentTimeMillis() + "_" + fileName);
             }
             if (src.renameTo(dest)) {
+                scanFileToMediaStore(dest.getAbsolutePath());
                 return dest.getAbsolutePath();
             }
             // 跨挂载点 rename 失败时回退为流式复制
@@ -90,6 +91,7 @@ public class UploadRequestProcesser implements RequestProcesser {
                     out.write(buffer, 0, len);
                 }
                 src.delete();
+                scanFileToMediaStore(dest.getAbsolutePath());
                 return dest.getAbsolutePath();
             } catch (Exception e2) {
                 Log.e("UploadRequestProcesser", "复制上传文件到公共目录失败", e2);
@@ -98,6 +100,19 @@ public class UploadRequestProcesser implements RequestProcesser {
         } catch (Exception e) {
             Log.e("UploadRequestProcesser", "移动上传文件到公共目录失败", e);
             return localFilename;
+        }
+    }
+
+    /**
+     * 通知 MediaScanner 扫描文件，使其写入 MediaStore 索引。
+     * Android 11 分区存储下，应用通过 File API 写入公共目录的文件不会被自动索引，
+     * 其他文件管理器（如 MiXplorer）通过 FUSE 将看不到该文件，扫描后即可见。
+     */
+    private void scanFileToMediaStore(String path) {
+        try {
+            android.media.MediaScannerConnection.scanFile(context, new String[]{path}, null, null);
+        } catch (Exception e) {
+            android.util.Log.e("UploadRequestProcesser", "通知媒体扫描失败: " + path, e);
         }
     }
 }
