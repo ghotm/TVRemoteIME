@@ -231,36 +231,57 @@ public class AppPackagesHelper {
     }
 
     /**
-     * 卸载应用（多级回退，兼容无标准卸载入口的定制固件）
-     * 1. 系统原生卸载页：ACTION_DELETE + package: URI（解析存在才启动）
-     * 2. 传统卸载页：android.intent.action.UNINSTALL_PACKAGE（部分固件使用）
-     * 3. 通过内置 ADB 客户端执行 pm uninstall（需电视已开启网络调试）
+     * 卸载应用（与安装一致：优先直接调用系统卸载界面）
+     * 1. 显式启动 PackageInstaller 的卸载页面（部分定制固件不响应隐式 ACTION_DELETE）
+     * 2. 隐式 ACTION_DELETE（系统原生卸载页）
+     * 3. 传统卸载页：android.intent.action.UNINSTALL_PACKAGE
+     * 4. 通过内置 ADB 客户端执行 pm uninstall（需电视已开启网络调试）
      */
     public static void uninstallPackage(final String packageName, final Context context){
         if(getApplicationInfo(packageName, context) == null)return;
         try {
             PackageManager pm = context.getPackageManager();
-            // 1. 系统原生卸载入口
+            Uri packageUri = Uri.parse("package:" + packageName);
+            // 1. 显式启动系统卸载界面（与安装使用 InstallStart 同理，兼容不响应隐式意图的定制固件）
+            String[][] uninstallers = new String[][]{
+                    {"com.android.packageinstaller", "com.android.packageinstaller.UninstallerActivity"},
+                    {"com.google.android.packageinstaller", "com.google.android.packageinstaller.UninstallerActivity"}
+            };
+            for(String[] uninstaller : uninstallers){
+                Intent explicit = new Intent();
+                explicit.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                explicit.setAction(Intent.ACTION_DELETE);
+                explicit.setData(packageUri);
+                explicit.setClassName(uninstaller[0], uninstaller[1]);
+                if(pm.resolveActivity(explicit, 0) != null){
+                    try {
+                        context.startActivity(explicit);
+                        Log.i(IMEService.TAG, String.format("已删除应用包[%s]（系统卸载界面）", packageName));
+                        return;
+                    } catch (Exception ignore) { }
+                }
+            }
+            // 2. 隐式系统原生卸载入口
             Intent intent = new Intent();
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             intent.setAction(Intent.ACTION_DELETE);
-            intent.setData(Uri.parse("package:" + packageName));
+            intent.setData(packageUri);
             if (pm.resolveActivity(intent, 0) != null) {
                 context.startActivity(intent);
                 Log.i(IMEService.TAG, String.format("已删除应用包[%s]", packageName));
                 return;
             }
-            // 2. 传统卸载入口（部分固件用 UNINSTALL_PACKAGE）
+            // 3. 传统卸载入口（部分固件用 UNINSTALL_PACKAGE）
             Intent uninstallIntent = new Intent();
             uninstallIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             uninstallIntent.setAction("android.intent.action.UNINSTALL_PACKAGE");
-            uninstallIntent.setData(Uri.parse("package:" + packageName));
+            uninstallIntent.setData(packageUri);
             if (pm.resolveActivity(uninstallIntent, 0) != null) {
                 context.startActivity(uninstallIntent);
                 Log.i(IMEService.TAG, String.format("已删除应用包[%s]", packageName));
                 return;
             }
-            // 3. 回退：通过内置 ADB 客户端卸载（适用于系统未提供卸载入口的定制电视）
+            // 4. 回退：通过内置 ADB 客户端卸载（适用于系统未提供卸载入口的定制电视）
             if (uninstallPackageByAdb(packageName, context)) {
                 Log.i(IMEService.TAG, String.format("已通过 ADB 卸载应用包[%s]", packageName));
                 return;
@@ -284,7 +305,7 @@ public class AppPackagesHelper {
             if(helper == null){
                 return false;
             }
-            helper.sendData("shell:pm uninstall " + packageName);
+            helper.sendData("shell:pm uninstall --user 0 " + packageName);
             return true;
         }catch (Exception ex){
             Log.e(IMEService.TAG, String.format("通过 ADB 卸载应用包[%s]出错", packageName), ex);
