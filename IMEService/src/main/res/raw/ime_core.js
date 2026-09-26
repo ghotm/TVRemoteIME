@@ -104,13 +104,13 @@ $(document).on("touchend touchcancel mouseup mouseleave", function(){
 });
 function clickApp(id,type){
 	var app=$("#app-"+id);
-	if(2!=type||confirm("是否确认要卸载应用["+app.text()+"]？")){
-		$.post(1==type?"/run":"/uninstall",{packageName:app.attr("data-packageName")},function(data){
-			if("ok"==data&&2==type){
-				setTimeout(reloadAppList,15e3);
-			}
-		});
-	}
+	if(2==type&&!confirm("是否确认要卸载应用["+app.text()+"]？"))return;
+	if(2==type&&!confirm("再次确认：将卸载应用["+app.text()+"]，卸载后不可恢复！"))return;
+	$.post(1==type?"/run":"/uninstall",{packageName:app.attr("data-packageName")},function(data){
+		if("ok"==data&&2==type){
+			setTimeout(reloadAppList,15e3);
+		}
+	});
 }
 function postFileAction(action){
 	if(selectedPaths.length == 0) return;
@@ -142,19 +142,19 @@ function reloadAppList(){
 	$.post("/apps",{system:$("#cbListSystem")[0].checked},function(data){
 		var appList=$(".app-list");
 		appList.empty();
-		var uninstallChecked = $("#cbUninstall")[0].checked;
 		var html=[];
 		for(var i=0;i<data.length;i++){
 			var app=data[i];
 			html.push('<div class="app-item">');
 			html.push('<img src="/icon/'+app.packageName+'" class="app-icon" />');
 			html.push('<div class="app-name'+(app.isSysApp?" blue":"")+'" id="app-'+i+'" data-packageName="'+app.packageName+'">'+app.lable+"</div>");
+			html.push('<div class="app-pkg">'+app.packageName+"</div>");
 			html.push('<div class="app-btn">');
 			if(app.isSysApp){
 				html.push('   <input type="button" value="运行" class="btn" onclick="clickApp('+i+', 1);" />');
 			}else{
-				html.push('   <input type="button" value="运行" class="btn1 app-btn1' + (uninstallChecked ? ' hide' : '') + '" onclick="clickApp('+i+', 1);" />');
-				html.push('\t  <input type="button" value="卸载" class="btn2 app-btn1' + (uninstallChecked ? '' : ' hide') + '" onclick="clickApp('+i+', 2);" />');
+				html.push('   <input type="button" value="运行" class="btn1 app-btn1" onclick="clickApp('+i+', 1);" />');
+				html.push('\t  <input type="button" value="卸载" class="btn2 app-btn1" onclick="clickApp('+i+', 2);" />');
 			}
 			html.push("</div>");
 			html.push("</div>");

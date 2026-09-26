@@ -1361,3 +1361,11 @@ body {
 		color: var(--color-text-primary);
 	}
 }
+
+/* 应用包名显示（小字灰色） */
+.app-pkg {
+	font-size: 12px;
+	color: #999;
+	margin-top: 2px;
+	word-break: break-all;
+}
