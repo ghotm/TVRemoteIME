@@ -88,3 +88,8 @@ screenshot*.png
 
 # Proguard mapping
 proguardMapping.txt
+
+# 签名与凭据（勿提交；keystore 由 keystore/generate-keystore.sh 生成，密码配 GitHub Secrets）
+keystore.properties
+keystore/*.p12
+keystore/base64.txt

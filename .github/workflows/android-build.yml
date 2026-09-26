@@ -50,6 +50,25 @@ jobs:
       - name: 修复 gradlew 执行权限
         run: chmod +x gradlew
 
+      - name: 还原签名 keystore（GitHub Secrets）
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          # 未配置 Secret 时跳过（产物不签名，仅用于调试）
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            mkdir -p keystore
+            echo "$KEYSTORE_BASE64" | base64 -d > keystore/tvremoteime-release.p12
+            echo "KEYSTORE_FILE=keystore/tvremoteime-release.p12" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+          else
+            echo "::warning::未配置 KEYSTORE_BASE64，本次产物将不签名"
+          fi
+
       - name: 编译 Debug 与 Release
         run: ./gradlew assembleDebug assembleRelease --stacktrace
 

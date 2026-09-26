@@ -2,12 +2,18 @@ plugins {
     id 'com.android.application'
 }
 
-// 签名配置：凭据来自仓库根 keystore.properties（固定签名，保证 CI 产物签名一致、可安装可升级）
+// 签名配置：优先读取环境变量（CI 中由 GitHub Secrets 注入），本地开发可回退到仓库根 keystore.properties（该文件含凭据，勿提交）
+// 保证 CI 产物签名一致、可安装、可升级；未提供凭据时退回未签名构建
 def keystoreProperties = new Properties()
 def keystorePropertiesFile = rootProject.file('keystore.properties')
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
+def ksStoreFile = System.getenv('KEYSTORE_FILE') ?: keystoreProperties['storeFile']
+def ksStorePassword = System.getenv('KEYSTORE_PASSWORD') ?: keystoreProperties['storePassword']
+def ksKeyAlias = System.getenv('KEY_ALIAS') ?: keystoreProperties['keyAlias']
+def ksKeyPassword = System.getenv('KEY_PASSWORD') ?: keystoreProperties['keyPassword']
+def hasSigningConfig = ksStoreFile != null && ksStorePassword != null && ksKeyAlias != null && ksKeyPassword != null
 
 android {
     namespace 'com.android.tvremoteime'
@@ -24,11 +30,11 @@ android {
 
     signingConfigs {
         release {
-            if (keystorePropertiesFile.exists()) {
-                storeFile rootProject.file(keystoreProperties['storeFile'])
-                storePassword keystoreProperties['storePassword']
-                keyAlias keystoreProperties['keyAlias']
-                keyPassword keystoreProperties['keyPassword']
+            if (hasSigningConfig) {
+                storeFile rootProject.file(ksStoreFile)
+                storePassword ksStorePassword
+                keyAlias ksKeyAlias
+                keyPassword ksKeyPassword
             }
         }
     }
@@ -37,7 +43,7 @@ android {
         debug {
             minifyEnabled false
             // debug 也用固定签名，保证任意产物可安装且升级签名一致
-            if (keystorePropertiesFile.exists()) {
+            if (hasSigningConfig) {
                 signingConfig signingConfigs.release
             }
         }
@@ -45,7 +51,7 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), '../proguard-project.txt'
-            if (keystorePropertiesFile.exists()) {
+            if (hasSigningConfig) {
                 signingConfig signingConfigs.release
             }
         }
