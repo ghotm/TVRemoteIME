@@ -116,7 +116,21 @@ public class MainActivity extends Activity implements View.OnClickListener {
 
     private void openInputMethodSettings(){
         try {
-            this.startActivityForResult(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS), 0);
+            // 1. 通用方案：标准输入法设置入口（TCL 等定制系统可能未注册该 action）
+            Intent intent = new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS);
+            if (getPackageManager().resolveActivity(intent, 0) != null) {
+                this.startActivityForResult(intent, 0);
+                return;
+            }
+            // 2. 回退：直接弹出系统输入法选择器（无需设置页，任何界面可用）
+            InputMethodManager imm = (InputMethodManager) getApplicationContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.showInputMethodPicker();
+                Environment.toast(getApplicationContext(), "请在弹出列表中选择\"" + getString(R.string.app_name) + "\"输入法");
+                return;
+            }
+            // 3. 兜底：提示 adb 启用方式
+            Environment.toast(getApplicationContext(), "无法打开输入法设置，可在开发者选项中通过 adb 启用：ime enable com.android.tvremoteime/.IMEService");
         }catch (Exception ignored){
             Environment.toast(getApplicationContext(), "抱歉，无法激活启用输入法，请手动启动服务！");
         }
