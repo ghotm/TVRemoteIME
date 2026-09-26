@@ -57,6 +57,28 @@ public class IMEService extends InputMethodService implements View.OnClickListen
 
 	final Handler handler = new Handler();
 
+	// BUG4 兜底：keydown 后若长时间未收到 keyup，自动补发 ACTION_UP，避免系统持续长按
+	// 时长需大于前端 5 秒熔断，作为最终保险
+	private static final long KEY_AUTO_UP_DELAY = 6000;
+	private int lastKeyDownCode = -1;
+	private long lastKeyDownTime = 0;
+	private final Runnable keyAutoUpRunnable = new Runnable() {
+		@Override
+		public void run() {
+			int kc = lastKeyDownCode;
+			if (kc != -1 && SystemClock.uptimeMillis() - lastKeyDownTime >= KEY_AUTO_UP_DELAY) {
+				InputConnection ic = getCurrentInputConnection();
+				if (ic != null) {
+					long t = SystemClock.uptimeMillis();
+					ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP, kc, 0, 0,
+							KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
+							KeyEvent.FLAG_SOFT_KEYBOARD | KeyEvent.FLAG_KEEP_TOUCH_MODE));
+				}
+				lastKeyDownCode = -1;
+			}
+		}
+	};
+
 	@Override
 	public void onCreate() {
 		super.onCreate();
@@ -219,6 +241,11 @@ public class IMEService extends InputMethodService implements View.OnClickListen
 												ic.sendKeyEvent(new KeyEvent(eventTime, eventTime,
 														KeyEvent.ACTION_DOWN, kc, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
 														KeyEvent.FLAG_SOFT_KEYBOARD | KeyEvent.FLAG_KEEP_TOUCH_MODE));
+												// 记录按键并启动超时兜底：防止前端 touchend 丢失导致 DOWN 后永远没有 UP
+												lastKeyDownCode = kc;
+												lastKeyDownTime = SystemClock.uptimeMillis();
+												handler.removeCallbacks(keyAutoUpRunnable);
+												handler.postDelayed(keyAutoUpRunnable, KEY_AUTO_UP_DELAY);
 											}
 											break;
 										case KEY_ACTION_UP:
@@ -227,6 +254,8 @@ public class IMEService extends InputMethodService implements View.OnClickListen
 													KeyEvent.ACTION_UP, kc, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
 													KeyEvent.FLAG_SOFT_KEYBOARD | KeyEvent.FLAG_KEEP_TOUCH_MODE));
 											}
+											// 收到 UP，取消超时兜底
+											lastKeyDownCode = -1;
 											break;
 									}
 								}

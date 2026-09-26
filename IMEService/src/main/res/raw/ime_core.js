@@ -61,14 +61,20 @@ function postKeyCode(keyCode){
 		console.log(data);
 	});
 }
+// 长按按键起始时间，用于超时熔断（防止 touchend 丢失时无限重发 keydown）
+var keyActionStartTime = 0;
 function postKeyActionCode(keyCode, keyAction){
 	curKeyCode = keyCode;
 	curKeyState = keyAction;
+	if(keyAction == 1){
+		keyActionStartTime = +new Date();
+	}
 	var action = function(){
 		var path = keyAction == 1 ? "/keydown" : "/keyup";
 		$.post(path,{code:keyCode},function(data){
 			console.log(data);
-			if(curKeyState == 1 && curKeyCode == keyCode){
+			// 熔断保护：超过 5 秒自动停止重发，避免 touchend 丢失导致持续发送按键
+			if(curKeyState == 1 && curKeyCode == keyCode && (+new Date() - keyActionStartTime < 5000)){
 				keyActionTimer = setTimeout(action, 100);
 			}else{
 				keyActionTimer = null;
@@ -83,6 +89,19 @@ function postKeyActionCode(keyCode, keyAction){
 	}
 	action();
 }
+// 全局兜底：手指滑出按键元素后在别处抬起时，元素级 touchend 不会触发，
+// 这里在 document 级别监听并复位按键状态、补发一次 keyup，避免系统持续长按
+$(document).on("touchend touchcancel mouseup mouseleave", function(){
+	if(keyActionTimer){
+		clearTimeout(keyActionTimer);
+		keyActionTimer = null;
+	}
+	if(curKeyState == 1){
+		curKeyState = 2;
+		postKeyActionCode(curKeyCode, 2);
+	}
+	keyActionStartTime = 0;
+});
 function clickApp(id,type){
 	var app=$("#app-"+id);
 	if(2!=type||confirm("是否确认要卸载应用["+app.text()+"]？")){
