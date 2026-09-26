@@ -149,7 +149,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
             }
             // 2. Android 11+：直达本应用无障碍服务的详情页（部分定制电视仅支持此入口）
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Intent detailIntent = new Intent(Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS);
+                Intent detailIntent = new Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS");
                 detailIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 detailIntent.putExtra("android.provider.extra.ACCESSIBILITY_SERVICE_COMPONENT_NAME",
                         getPackageName() + "/" + MouseAccessibilityService.class.getName());
