@@ -48,7 +48,9 @@ public class PlayRequestProcesser implements RequestProcesser {
                 return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.OK, "ok");
 
             case "/playStop":
-                // Note: Stop functionality removed - system player handles its own lifecycle
+                // 停止播放：播放由系统视频播放器（外部应用）承担，
+                // 这里通过「媒体停止/暂停键 + 内置 ADB 强制停止播放器进程」来停止
+                VideoPlayHelper.stopPlay(this.context);
                 return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.OK, "ok");
 
             case "/changePlayFFI":

@@ -435,6 +435,7 @@ function playMedia(obj){
 $('#stopPlay').on("click", function(){
 	$.post("/playStop",null, function(data) {
 		console.log(data)
+		alert('已发送停止播放指令。若画面未退出，请稍候或手动按遥控器返回键。')
 	})
 });
 $('#playUseSystem').on("click", function(){
