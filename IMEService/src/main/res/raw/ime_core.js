@@ -315,12 +315,12 @@ $("#cbUninstall").on("click",function(){
 $('#btnShowTVEdit,#btnTVEdit,#btnTVCancel').on('click',function(){
 	switch(this.id){
 		case 'btnShowTVEdit':
-			$(".tv-list").addClass("hide");
-			$(".tv-edit").removeClass("hide");
+			$(".tv-items").addClass("hidden");
+			$(".tv-editor").removeClass("hidden");
 			break;
 		case 'btnTVCancel':
-			$(".tv-edit").addClass("hide");
-			$(".tv-list").removeClass("hide");
+			$(".tv-editor").addClass("hidden");
+			$(".tv-items").removeClass("hidden");
 			break;
 		case 'btnTVEdit':
 			$.post("/tv.txt",{text:$('#tvData').val()},function(data){
@@ -331,8 +331,8 @@ $('#btnShowTVEdit,#btnTVEdit,#btnTVCancel').on('click',function(){
 				}else{
 					alert('电视直播源修改失败！');
 				}
-				$(".tv-edit").addClass("hide");
-				$(".tv-list").removeClass("hide");
+				$(".tv-editor").addClass("hidden");
+				$(".tv-items").removeClass("hidden");
 			});
 			break;
 	}
@@ -534,6 +534,7 @@ $("#btnInstallApk").on("click", function(){
 /* ========== == ========== */
 
 $("#btnUpload2").on("click", function(){ $("#upfile2")[0].click(); });
+$("#btnUploadTorrent").on("click", function(){ $("#upfile3")[0].click(); });
 
 $("#upfile2,#upfile3").change(function() {
 	var id = this.id;
