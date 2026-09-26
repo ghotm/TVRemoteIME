@@ -233,10 +233,10 @@ public class AppPackagesHelper {
      * 3. 常见系统设置包（com.android.settings / com.tcl.settings 等）逐个尝试启动
      * 4. 全部失败返回 false（调用方提示用户）
      */
-    public static boolean runSystemPackage(final String packageName, final Context context){
+        public static boolean runSystemPackage(final String packageName, final Context context){
         try {
             PackageManager pm = context.getPackageManager();
-            // 1. 显式包名：直接按其启动入口启动
+            // 1. 通用方案：参数含点优先按包名、再按 action 尝试（resolveActivity 通过才启动）
             if(packageName != null && packageName.contains(".")){
                 Intent pkgIntent = new Intent(Intent.ACTION_MAIN);
                 pkgIntent.setPackage(packageName);
@@ -247,9 +247,6 @@ public class AppPackagesHelper {
                     Log.i(IMEService.TAG, String.format("已运行系统应用包[%s]", packageName));
                     return true;
                 }
-            }
-            // 2. 标准 action（如 android.settings.SETTINGS）：解析存在才启动
-            if(packageName != null && !packageName.contains(".")){
                 Intent actionIntent = new Intent(packageName);
                 actionIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 if(pm.resolveActivity(actionIntent, 0) != null){
@@ -258,35 +255,10 @@ public class AppPackagesHelper {
                     return true;
                 }
             }
-            // 3. 模糊定位：动态扫描已安装应用中「设置类」的可启动应用
-            //    （包名含 settings 或应用名含「设置」，适配各品牌定制电视，如 TCL/雷鸟/创维/海信等）
-            List<ApplicationInfo> apps = pm.getInstalledApplications(0);
-            for (ApplicationInfo ai : apps) {
-                String pkg = ai.packageName;
-                if (pkg == null || pkg.equals(context.getPackageName())) continue;
-                String label = null;
-                try {
-                    label = String.valueOf(pm.getApplicationLabel(ai));
-                } catch (Exception ignore) {
-                }
-                boolean isSettings = pkg.toLowerCase().contains("settings")
-                        || (label != null && (label.contains("设置") || label.toLowerCase().contains("settings")));
-                if (isSettings) {
-                    Intent launchIntent = pm.getLaunchIntentForPackage(pkg);
-                    if (launchIntent != null) {
-                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        try {
-                            context.startActivity(launchIntent);
-                            Log.i(IMEService.TAG, String.format("已运行系统应用包[%s]", pkg));
-                            return true;
-                        } catch (Exception ignore) {
-                            // 尝试下一个候选
-                        }
-                    }
-                }
-            }
-            // 4. 已知系统设置包逐个尝试（最后的兜底，覆盖主流 Android 与常见电视品牌）
-            String[] settingsPkgs = new String[]{"com.android.settings", "com.tcl.settings"};
+            // 2. 已知设置包优先（覆盖主流系统与常见电视品牌，比动态扫描更可靠）
+            String[] settingsPkgs = new String[]{"com.android.settings", "com.tcl.settings",
+                    "com.hisense.settings", "com.skyworth.settings", "com.letv.settings",
+                    "com.miui.settings", "com.huawei.android.settings"};
             for(String pkg : settingsPkgs){
                 Intent launchIntent = pm.getLaunchIntentForPackage(pkg);
                 if(launchIntent != null){
@@ -296,12 +268,34 @@ public class AppPackagesHelper {
                     return true;
                 }
             }
+            // 3. 模糊定位兜底：动态扫描系统应用，仅精确匹配「设置」类，避免误命中第三方应用
+            List<ApplicationInfo> apps = pm.getInstalledApplications(0);
+            for (ApplicationInfo ai : apps) {
+                String pkg = ai.packageName;
+                if (pkg == null || pkg.equals(context.getPackageName())) continue;
+                if ((ai.flags & ApplicationInfo.FLAG_SYSTEM) == 0) continue; // 仅系统应用
+                String label = null;
+                try { label = String.valueOf(pm.getApplicationLabel(ai)); } catch (Exception ignore) {}
+                String pkgLower = pkg.toLowerCase();
+                boolean isSettings = pkgLower.endsWith(".settings")
+                        || (label != null && ("设置".equals(label.trim()) || "Settings".equalsIgnoreCase(label.trim())));
+                if (isSettings) {
+                    Intent launchIntent = pm.getLaunchIntentForPackage(pkg);
+                    if (launchIntent != null) {
+                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        try {
+                            context.startActivity(launchIntent);
+                            Log.i(IMEService.TAG, String.format("已运行系统应用包[%s]", pkg));
+                            return true;
+                        } catch (Exception ignore) { }
+                    }
+                }
+            }
         }catch (Exception ex){
             Log.e(IMEService.TAG, String.format("运行系统应用包[%s]出错", packageName), ex);
         }
         return false;
     }
-
     public static byte[] getAppIcon(String packageName, Context context){
         ApplicationInfo applicationInfo = getApplicationInfo(packageName, context);
         if(applicationInfo == null) return  null;
