@@ -50,6 +50,18 @@ jobs:
       - name: 修复 gradlew 执行权限
         run: chmod +x gradlew
 
+      - name: 检查签名环境变量（调试，只打印长度不泄露内容）
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "KEYSTORE_BASE64 长度: ${#KEYSTORE_BASE64}"
+          echo "KEYSTORE_PASSWORD 长度: ${#KEYSTORE_PASSWORD}"
+          echo "KEY_ALIAS: ${KEY_ALIAS:-<未配置>}"
+          echo "KEY_PASSWORD 长度: ${#KEY_PASSWORD}"
+
       - name: 还原签名 keystore（GitHub Secrets）
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
