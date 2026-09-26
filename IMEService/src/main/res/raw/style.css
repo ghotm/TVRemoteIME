@@ -1374,3 +1374,44 @@ body {
 	margin-top: 2px;
 	word-break: break-all;
 }
+/* ===== 安装 APK 面板（重新实现） ===== */
+.upload-card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-sm);
+}
+.upload-title {
+	font-size: var(--font-size-base);
+	font-weight: 600;
+	color: var(--color-text-primary);
+	margin-bottom: var(--spacing-xs);
+}
+.upload-row {
+	display: flex;
+	align-items: center;
+	gap: var(--spacing-sm);
+	flex-wrap: wrap;
+}
+.file-chosen-name {
+	font-size: var(--font-size-sm);
+	color: var(--color-text-secondary);
+	word-break: break-all;
+	flex: 1;
+	min-width: 140px;
+}
+.upload-status {
+	margin-top: var(--spacing-xs);
+	font-size: var(--font-size-sm);
+	color: var(--color-text-secondary);
+}
+.apk-progress {
+	margin-top: var(--spacing-xs);
+}
+.hidden-file-input {
+	position: absolute;
+	width: 0.1px;
+	height: 0.1px;
+	opacity: 0;
+	overflow: hidden;
+	z-index: -1;
+}

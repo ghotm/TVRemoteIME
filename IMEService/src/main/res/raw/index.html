@@ -153,15 +153,29 @@
 			</section>
 
 			<section class="upload-panel">
-				<div class="upload-wrapper">
-					<input type="file" id="upfile" value=".." aria-label="选择APK文件">
-				    <button type="button" class="btn-primary upload-btn" id="btnUpload">上传APK</button>
-					<div class="progress-bar">
-					    <div class="progress-fill" id="processbar1"></div>
-					    <span class="progress-text">0%</span>
-					</div>
-				</div>
-			</section>
+	<div class="upload-card">
+		<div class="upload-title">安装 APK</div>
+		<div class="upload-row">
+			<button type="button" class="btn-secondary" id="btnPickApk">选择 APK 文件</button>
+			<span class="file-chosen-name" id="apkFileName">未选择文件</span>
+		</div>
+		<div class="upload-row">
+			<button type="button" class="btn-primary upload-btn" id="btnInstallApk">上传并安装</button>
+			<label class="checkbox-label">
+				<input type="checkbox" id="cbAutoInstallApk" checked>
+				<span>上传后自动安装</span>
+			</label>
+		</div>
+		<div class="apk-progress hidden" id="apkProgressWrap">
+			<div class="progress-bar">
+				<div class="progress-fill" id="processbar1"></div>
+				<span class="progress-text">0%</span>
+			</div>
+			<div class="upload-status" id="uploadStatus"></div>
+		</div>
+	</div>
+	<input type="file" id="apkFileInput" accept=".apk" class="hidden-file-input" aria-label="选择APK文件">
+</section>
 		</div>
 
 		<!-- Tab Content: File Management -->

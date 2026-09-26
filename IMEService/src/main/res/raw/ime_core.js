@@ -429,6 +429,71 @@ $("#btnClear").on("click", function() {
 	}
 })
 // 上传按钮点击 → 触发对应的文件选择 input（input 通过样式隐藏，需按钮触发）
+/* ========== 安装 APK（重新实现） ========== */
+var apkInstallFile = null;
+$("#btnPickApk").on("click", function(){ $("#apkFileInput")[0].click(); });
+$("#apkFileInput").on("change", function(){
+	apkInstallFile = this.files && this.files[0];
+	if(apkInstallFile){
+		var isApk = apkInstallFile.name.toLowerCase().indexOf(".apk") != -1;
+		$("#apkFileName").text(apkInstallFile.name + "（" + formatSize(apkInstallFile.size) + "）" + (isApk ? "" : "（非APK文件，不会自动安装）"));
+	}else{
+		$("#apkFileName").text("未选择文件");
+	}
+});
+$("#btnInstallApk").on("click", function(){
+	if(!apkInstallFile){ alert("请先选择要上传的 APK 文件"); return; }
+	var autoInstall = $("#cbAutoInstallApk").is(":checked");
+	$("#apkProgressWrap").removeClass("hidden");
+	$("#processbar1").css("width", "1%");
+	$("#apkProgressWrap .progress-text").text("0%");
+	$("#uploadStatus").text("正在上传…");
+	var formData = new FormData();
+	formData.append("file", apkInstallFile, encodeURI(apkInstallFile.name));
+	formData.append("autoInstall", autoInstall);
+	$.ajax({
+		type: "POST",
+		url: "/upload",
+		data: formData,
+		processData: false,
+		contentType: false,
+		xhr: function(){
+			var xhr = new XMLHttpRequest();
+			if(xhr.upload){
+				xhr.upload.onprogress = function(e){
+					if(e.lengthComputable){
+						var pct = Math.floor(100 * e.loaded / e.total);
+						$("#processbar1").css("width", pct + "%");
+						$("#apkProgressWrap .progress-text").text(pct + "%");
+						$("#uploadStatus").text("正在上传… " + pct + "%");
+					}
+				};
+			}
+			return xhr;
+		},
+		success: function(data){
+			if(data && data.success){
+				$("#processbar1").css("width", "100%");
+				$("#apkProgressWrap .progress-text").text("100%");
+				if(data.filePath && data.filePath.toLowerCase().indexOf(".apk") != -1 && autoInstall){
+					$("#uploadStatus").text("上传成功，已发起安装！请留意电视屏幕上的安装确认。");
+				}else{
+					$("#uploadStatus").text("上传成功！文件保存在：" + (data.filePath || "电视存储"));
+				}
+				apkInstallFile = null;
+				$("#apkFileInput").val("");
+				$("#apkFileName").text("未选择文件");
+			}else{
+				$("#uploadStatus").text("上传失败：" + ((data && data.message) || "未知错误"));
+			}
+		},
+		error: function(){
+			$("#uploadStatus").text("上传失败：无法连接电视服务，请确认输入法服务已启用。");
+		}
+	});
+});
+/* ========== == ========== */
+
 $("#btnUpload").on("click", function(){ $("#upfile")[0].click(); });
 $("#btnUpload2").on("click", function(){ $("#upfile2")[0].click(); });
 
