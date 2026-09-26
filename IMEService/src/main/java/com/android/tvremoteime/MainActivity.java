@@ -147,30 +147,22 @@ public class MainActivity extends Activity implements View.OnClickListener {
                 Environment.toast(getApplicationContext(), "请在列表中找到\"" + getString(R.string.app_name) + "\"并启用");
                 return;
             }
-            // 2. 模糊定位：部分定制电视（如 TCL）未注册标准辅助功能入口，动态查找系统内的无障碍/辅助功能应用
-            List<ApplicationInfo> apps = pm.getInstalledApplications(0);
-            for (ApplicationInfo ai : apps) {
-                if (ai.packageName == null || ai.packageName.equals(getPackageName())) continue;
-                if ((ai.flags & ApplicationInfo.FLAG_SYSTEM) == 0) continue;
-                String label = null;
-                try { label = String.valueOf(pm.getApplicationLabel(ai)); } catch (Exception ignore) {}
-                String pkgLower = ai.packageName.toLowerCase();
-                boolean isAccessibility = pkgLower.contains("accessibility") || pkgLower.contains("walleve")
-                        || (label != null && (label.contains("辅助功能") || label.contains("无障碍")));
-                if (isAccessibility) {
-                    Intent launchIntent = pm.getLaunchIntentForPackage(ai.packageName);
-                    if (launchIntent != null) {
-                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        try {
-                            startActivity(launchIntent);
-                            Environment.toast(getApplicationContext(), "请在该页面开启\"" + getString(R.string.app_name) + "\"的无障碍服务");
-                            return;
-                        } catch (Exception ignore) {}
-                    }
+            // 2. Android 11+：直达本应用无障碍服务的详情页（部分定制电视仅支持此入口）
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Intent detailIntent = new Intent(Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS);
+                detailIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                detailIntent.putExtra("android.provider.extra.ACCESSIBILITY_SERVICE_COMPONENT_NAME",
+                        getPackageName() + "/" + MouseAccessibilityService.class.getName());
+                if (pm.resolveActivity(detailIntent, 0) != null) {
+                    startActivity(detailIntent);
+                    Environment.toast(getApplicationContext(), "请在列表中找到\"" + getString(R.string.app_name) + "\"并启用");
+                    return;
                 }
             }
-            // 3. 兜底提示
-            Environment.toast(getApplicationContext(), "未找到辅助功能入口，可在开发者选项中通过 adb 命令开启无障碍服务");
+            // 3. 兜底提示：定制电视（如 TCL）未提供无障碍设置入口，给出 ADB 开启命令
+            Environment.toast(getApplicationContext(),
+                    "本机系统未提供无障碍设置入口，请用 ADB 开启：settings put secure enabled_accessibility_services "
+                            + getPackageName() + "/" + MouseAccessibilityService.class.getName());
         } catch (Exception e) {
             Environment.toast(getApplicationContext(), "无法打开辅助功能设置，请手动前往：设置 → 辅助功能");
         }
