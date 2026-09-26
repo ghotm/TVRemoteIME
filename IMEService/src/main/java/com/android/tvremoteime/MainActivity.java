@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
@@ -52,6 +53,15 @@ public class MainActivity extends Activity implements View.OnClickListener {
             accessibilityButton.setOnClickListener(this);
         }
 
+        // Android 11+ 需「所有文件访问权限」，否则文件管理/上传功能受限（电视盒子管理员环境可直接授权）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !android.os.Environment.isExternalStorageManager()) {
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+                Environment.toast(getApplicationContext(), "请授予\"所有文件访问权限\"以正常使用文件管理与上传功能");
+            }
+        }
         refreshQRCode();
         updateAccessibilityStatus();
     }

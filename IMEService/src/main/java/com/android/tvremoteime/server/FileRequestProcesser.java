@@ -165,10 +165,36 @@ public class FileRequestProcesser  implements RequestProcesser {
                 }
                 File localFile = new File(localFilename);
                 saveFilename = new File(saveFilename, localFile.getName());
+                // 确保目标父目录存在（目标目录可能尚未创建）
+                File parent = saveFilename.getParentFile();
+                if (parent != null && !parent.exists()) {
+                    parent.mkdirs();
+                }
                 r = localFile.renameTo(saveFilename);
+                if (!r && localFile.exists()) {
+                    // 跨挂载点（应用私有目录→公共目录）renameTo 会失败，改用流式复制回退
+                    r = copyFileStream(localFile, saveFilename);
+                    if (r) {
+                        localFile.delete();
+                    }
+                }
             }
         }
         return RemoteServer.createJSONResponse(NanoHTTPD.Response.Status.OK,  "{\"success\":" + (r ? "true": "false") + "}");
+    }
+
+    private boolean copyFileStream(File src, File dest) {
+        try (java.io.InputStream in = new FileInputStream(src);
+             java.io.OutputStream out = new java.io.FileOutputStream(dest)) {
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = in.read(buf)) > 0) {
+                out.write(buf, 0, len);
+            }
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     private void batchDeleteFile(String paths){
