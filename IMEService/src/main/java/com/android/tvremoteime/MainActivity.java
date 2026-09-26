@@ -9,9 +9,12 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.preference.PreferenceManager;
 import android.provider.Settings;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
@@ -159,12 +162,59 @@ public class MainActivity extends Activity implements View.OnClickListener {
                     return;
                 }
             }
-            // 3. 兜底提示：定制电视（如 TCL）未提供无障碍设置入口，给出 ADB 开启命令
+            // 3. 自举方案：本机未提供无障碍设置入口（如 TCL 定制电视），尝试通过内置 ADB 客户端自动启用（需电视已开启网络调试）
+            if (enableAccessibilityByAdb()) {
+                Environment.toast(getApplicationContext(), "正在通过 ADB 自动启用触控服务…");
+                new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        updateAccessibilityStatus();
+                        if (MouseAccessibilityService.isServiceEnabled()) {
+                            Environment.toast(getApplicationContext(), "触控服务已启用");
+                        } else {
+                            Environment.toast(getApplicationContext(), "自动启用未生效，请确认电视已开启网络调试，或用 ADB 命令手动启用");
+                        }
+                    }
+                }, 3000);
+                return;
+            }
+            // 4. 兜底提示：给出 ADB 手动开启命令
             Environment.toast(getApplicationContext(),
                     "本机系统未提供无障碍设置入口，请用 ADB 开启：settings put secure enabled_accessibility_services "
                             + getPackageName() + "/" + MouseAccessibilityService.class.getName());
         } catch (Exception e) {
             Environment.toast(getApplicationContext(), "无法打开辅助功能设置，请手动前往：设置 → 辅助功能");
+        }
+    }
+
+    /**
+     * 通过内置 ADB 客户端（连接电视自身 adb 服务）启用本应用的无障碍服务。
+     * 适用于系统未提供无障碍设置入口的定制设备；需电视已开启网络调试。
+     */
+    private boolean enableAccessibilityByAdb() {
+        try {
+            if (AdbHelper.getInstance() == null) {
+                AdbHelper.createInstance();
+            }
+            AdbHelper.initService(getApplicationContext());
+            AdbHelper helper = AdbHelper.getInstance();
+            if (helper == null) {
+                return false;
+            }
+            final String component = getPackageName() + "/" + MouseAccessibilityService.class.getName();
+            // 保留已有无障碍服务列表，仅追加本应用；并确保无障碍总开关开启
+            String cmd = "settings put secure accessibility_enabled 1; "
+                    + "cur=$(settings get secure enabled_accessibility_services); "
+                    + "case \"$cur\" in *\"" + getPackageName() + "\"*) ;; *) "
+                    + "if [ -z \"$cur\" ] || [ \"$cur\" = \"null\" ]; then "
+                    + "settings put secure enabled_accessibility_services \"" + component + "\"; "
+                    + "else settings put secure enabled_accessibility_services \"$cur:" + component + "\"; fi;; esac";
+            helper.sendData("shell:" + cmd);
+            Log.i("MainActivity", "已通过 ADB 发送启用无障碍服务命令");
+            return true;
+        } catch (Exception e) {
+            Log.e("MainActivity", "通过 ADB 启用无障碍服务失败", e);
+            return false;
         }
     }
 
