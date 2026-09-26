@@ -110,7 +110,8 @@ function clickApp(id,type){
 	if(2==type&&!confirm("再次确认：将卸载应用["+app.text()+"]，卸载后不可恢复！"))return;
 	$.post(1==type?"/run":"/uninstall",{packageName:app.attr("data-packageName")},function(data){
 		if("ok"==data&&2==type){
-			setTimeout(reloadAppList,15e3);
+			alert("卸载指令已发送，应用列表将在几秒后自动刷新；若应用仍然存在，说明卸载未成功（可能需要在电视上允许 ADB 调试授权）。");
+			setTimeout(reloadAppList,3e3);
 		}
 	});
 }

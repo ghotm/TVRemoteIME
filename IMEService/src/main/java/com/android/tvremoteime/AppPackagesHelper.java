@@ -155,45 +155,74 @@ public class AppPackagesHelper {
     public static void installPackage(final File apkFile, final Context context){
         try {
             PackageManager pm = context.getPackageManager();
-            // 1. 通用方案：标准 ACTION_VIEW，交由系统当前的安装器处理。
-            //    用 FileProvider 生成 content:// URI（Uri.fromFile 在 Android 7+ 会抛 FileUriExposedException）
+            // 用 FileProvider 生成 content:// URI（Uri.fromFile 在 Android 7+ 会抛 FileUriExposedException）
             Uri uri = androidx.core.content.FileProvider.getUriForFile(context,
                     context.getPackageName() + ".fileprovider", apkFile);
-            Intent intent = new Intent();
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            intent.setAction(Intent.ACTION_VIEW);
-            intent.setDataAndType(uri, "application/vnd.android.package-archive");
-            if(pm.resolveActivity(intent, 0) != null){
-                context.startActivity(intent);
-                Log.i(IMEService.TAG, String.format("已安装应用包[%s]", apkFile.getName()));
-                return;
+            String apkMimeType = "application/vnd.android.package-archive";
+            int installFlags = Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION;
+
+            // 1. 优先显式使用系统 PackageInstaller：
+            //    部分设备上 APK 的 ACTION_VIEW 默认入口会被第三方应用（如 AppManager）抢占，导致弹出错误界面
+            String[][] systemInstallers = new String[][]{
+                    {"com.android.packageinstaller", "com.android.packageinstaller.InstallStart"},
+                    {"com.google.android.packageinstaller", "com.google.android.packageinstaller.InstallStart"}
+            };
+            for (String[] installer : systemInstallers) {
+                Intent explicit = new Intent();
+                explicit.addFlags(installFlags);
+                explicit.setAction(Intent.ACTION_VIEW);
+                explicit.setDataAndType(uri, apkMimeType);
+                explicit.setClassName(installer[0], installer[1]);
+                try {
+                    if (pm.resolveActivity(explicit, 0) != null) {
+                        context.startActivity(explicit);
+                        Log.i(IMEService.TAG, String.format("已安装应用包[%s]", apkFile.getName()));
+                        return;
+                    }
+                } catch (Exception ignore) {
+                    // 该候选安装器不可用，尝试下一个
+                }
             }
-            // 2. 模糊定位：查询能处理 APK 安装意图的 Activity（即系统当前安装器），显式启动
-            List<ResolveInfo> infos = pm.queryIntentActivities(intent, 0);
+            // 2. 模糊定位：查询能处理 APK 安装意图的 Activity
+            Intent viewIntent = new Intent();
+            viewIntent.addFlags(installFlags);
+            viewIntent.setAction(Intent.ACTION_VIEW);
+            viewIntent.setDataAndType(uri, apkMimeType);
+            List<ResolveInfo> infos = pm.queryIntentActivities(viewIntent, 0);
+            // 2.1 优先选择系统安装器（包名含 packageinstaller 或类名含 installstart），跳过第三方拦截器
             for (ResolveInfo info : infos) {
                 if (info.activityInfo == null) continue;
-                Intent explicit = new Intent(intent);
+                String pkgName = info.activityInfo.packageName == null ? "" : info.activityInfo.packageName.toLowerCase();
+                String clsName = info.activityInfo.name == null ? "" : info.activityInfo.name.toLowerCase();
+                if (!pkgName.contains("packageinstaller") && !clsName.contains("installstart")) continue;
+                Intent explicit = new Intent(viewIntent);
                 explicit.setClassName(info.activityInfo.packageName, info.activityInfo.name);
                 try {
                     context.startActivity(explicit);
                     Log.i(IMEService.TAG, String.format("已安装应用包[%s]", apkFile.getName()));
                     return;
                 } catch (Exception ignore) {
-                    // 尝试下一个候选安装器
+                    // 尝试下一个
                 }
             }
-            // 3. 已知系统安装器包逐个尝试（最后的兜底）
-            String[] installerPkgs = new String[]{"com.android.packageinstaller", "com.google.android.packageinstaller"};
-            for (String pkg : installerPkgs) {
-                Intent instIntent = new Intent(intent);
-                instIntent.setPackage(pkg);
+            // 2.2 退而求其次：任意能处理该意图的组件
+            for (ResolveInfo info : infos) {
+                if (info.activityInfo == null) continue;
+                Intent explicit = new Intent(viewIntent);
+                explicit.setClassName(info.activityInfo.packageName, info.activityInfo.name);
                 try {
-                    context.startActivity(instIntent);
+                    context.startActivity(explicit);
                     Log.i(IMEService.TAG, String.format("已安装应用包[%s]", apkFile.getName()));
                     return;
                 } catch (Exception ignore) {
-                    // 继续下一个
+                    // 尝试下一个
                 }
+            }
+            // 3. 系统默认解析（可能被第三方安装器接管）
+            if (pm.resolveActivity(viewIntent, 0) != null) {
+                context.startActivity(viewIntent);
+                Log.i(IMEService.TAG, String.format("已安装应用包[%s]", apkFile.getName()));
+                return;
             }
             Log.e(IMEService.TAG, String.format("安装应用包[%s]出错：未找到可用的系统安装器", apkFile.getName()));
         }catch (Exception ex){
