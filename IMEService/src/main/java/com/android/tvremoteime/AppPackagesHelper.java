@@ -27,6 +27,8 @@ import java.util.List;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import com.android.tvremoteime.adb.AdbHelper;
 /**
  * Created by kingt on 2018/1/9.
  */
@@ -199,17 +201,65 @@ public class AppPackagesHelper {
         }
     }
 
+    /**
+     * 卸载应用（多级回退，兼容无标准卸载入口的定制固件）
+     * 1. 系统原生卸载页：ACTION_DELETE + package: URI（解析存在才启动）
+     * 2. 传统卸载页：android.intent.action.UNINSTALL_PACKAGE（部分固件使用）
+     * 3. 通过内置 ADB 客户端执行 pm uninstall（需电视已开启网络调试）
+     */
     public static void uninstallPackage(final String packageName, final Context context){
-        if(getApplicationInfo(packageName, context) == null)return;;
+        if(getApplicationInfo(packageName, context) == null)return;
         try {
+            PackageManager pm = context.getPackageManager();
+            // 1. 系统原生卸载入口
             Intent intent = new Intent();
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             intent.setAction(Intent.ACTION_DELETE);
             intent.setData(Uri.parse("package:" + packageName));
-            context.startActivity(intent);
-            Log.i(IMEService.TAG, String.format("已删除应用包[%s]", packageName));
+            if (pm.resolveActivity(intent, 0) != null) {
+                context.startActivity(intent);
+                Log.i(IMEService.TAG, String.format("已删除应用包[%s]", packageName));
+                return;
+            }
+            // 2. 传统卸载入口（部分固件用 UNINSTALL_PACKAGE）
+            Intent uninstallIntent = new Intent();
+            uninstallIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            uninstallIntent.setAction("android.intent.action.UNINSTALL_PACKAGE");
+            uninstallIntent.setData(Uri.parse("package:" + packageName));
+            if (pm.resolveActivity(uninstallIntent, 0) != null) {
+                context.startActivity(uninstallIntent);
+                Log.i(IMEService.TAG, String.format("已删除应用包[%s]", packageName));
+                return;
+            }
+            // 3. 回退：通过内置 ADB 客户端卸载（适用于系统未提供卸载入口的定制电视）
+            if (uninstallPackageByAdb(packageName, context)) {
+                Log.i(IMEService.TAG, String.format("已通过 ADB 卸载应用包[%s]", packageName));
+                return;
+            }
+            Log.e(IMEService.TAG, String.format("删除应用包[%s]出错：系统未提供卸载入口，且 ADB 不可用", packageName));
         }catch (Exception ex){
             Log.e(IMEService.TAG, String.format("删除应用包[%s]出错", packageName), ex);
+        }
+    }
+
+    /**
+     * 通过内置 ADB 客户端（连接电视自身 adb 服务）执行 pm uninstall
+     */
+    private static boolean uninstallPackageByAdb(final String packageName, final Context context){
+        try {
+            if(AdbHelper.getInstance() == null){
+                AdbHelper.createInstance();
+            }
+            AdbHelper.initService(context);
+            AdbHelper helper = AdbHelper.getInstance();
+            if(helper == null){
+                return false;
+            }
+            helper.sendData("shell:pm uninstall " + packageName);
+            return true;
+        }catch (Exception ex){
+            Log.e(IMEService.TAG, String.format("通过 ADB 卸载应用包[%s]出错", packageName), ex);
+            return false;
         }
     }
 
