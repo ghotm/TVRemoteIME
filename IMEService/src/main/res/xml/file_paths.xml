@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 可共享的路径（用于执行 APK 安装等场景） -->
+<paths>
+    <!-- 外部存储根目录（含公共 Download/TVRemoteIME 上传落点、文件管理根目录） -->
+    <external-path name="external_root" path="." />
+    <!-- 应用专属外部存储目录（上传临时文件/files 落点） -->
+    <external-files-path name="external_files" path="." />
+    <!-- 内部缓存与文件目录 -->
+    <cache-path name="cache" path="." />
+    <files-path name="files" path="." />
+</paths>

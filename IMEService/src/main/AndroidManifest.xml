@@ -28,6 +28,17 @@
         android:label="@string/app_name"
         android:theme="@style/AppTheme">
 
+        <!-- 为安装功能提供 content:// URI（Uri.fromFile 在 Android 7+ 会抛 FileUriExposedException） -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Declares the input method service -->
         <service
             android:name=".IMEService"

@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.BitmapDrawable;
@@ -12,6 +13,8 @@ import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.provider.Settings;
 import android.util.Log;
+
+import androidx.core.content.FileProvider;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -149,13 +152,48 @@ public class AppPackagesHelper {
 
     public static void installPackage(final File apkFile, final Context context){
         try {
-            Uri uri = Uri.fromFile(apkFile);
+            PackageManager pm = context.getPackageManager();
+            // 1. 通用方案：标准 ACTION_VIEW，交由系统当前的安装器处理。
+            //    用 FileProvider 生成 content:// URI（Uri.fromFile 在 Android 7+ 会抛 FileUriExposedException）
+            Uri uri = androidx.core.content.FileProvider.getUriForFile(context,
+                    context.getPackageName() + ".fileprovider", apkFile);
             Intent intent = new Intent();
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
             intent.setAction(Intent.ACTION_VIEW);
             intent.setDataAndType(uri, "application/vnd.android.package-archive");
-            context.startActivity(intent);
-            Log.i(IMEService.TAG, String.format("已安装应用包[%s]", apkFile.getName()));
+            if(pm.resolveActivity(intent, 0) != null){
+                context.startActivity(intent);
+                Log.i(IMEService.TAG, String.format("已安装应用包[%s]", apkFile.getName()));
+                return;
+            }
+            // 2. 模糊定位：查询能处理 APK 安装意图的 Activity（即系统当前安装器），显式启动
+            List<ResolveInfo> infos = pm.queryIntentActivities(intent, 0);
+            for (ResolveInfo info : infos) {
+                if (info.activityInfo == null) continue;
+                Intent explicit = new Intent(intent);
+                explicit.setClassName(info.activityInfo.packageName, info.activityInfo.name);
+                try {
+                    context.startActivity(explicit);
+                    Log.i(IMEService.TAG, String.format("已安装应用包[%s]", apkFile.getName()));
+                    return;
+                } catch (Exception ignore) {
+                    // 尝试下一个候选安装器
+                }
+            }
+            // 3. 已知系统安装器包逐个尝试（最后的兜底）
+            String[] installerPkgs = new String[]{"com.android.packageinstaller", "com.google.android.packageinstaller"};
+            for (String pkg : installerPkgs) {
+                Intent instIntent = new Intent(intent);
+                instIntent.setPackage(pkg);
+                try {
+                    context.startActivity(instIntent);
+                    Log.i(IMEService.TAG, String.format("已安装应用包[%s]", apkFile.getName()));
+                    return;
+                } catch (Exception ignore) {
+                    // 继续下一个
+                }
+            }
+            Log.e(IMEService.TAG, String.format("安装应用包[%s]出错：未找到可用的系统安装器", apkFile.getName()));
         }catch (Exception ex){
             Log.e(IMEService.TAG, String.format("安装应用包[%s]出错", apkFile.getName()), ex);
         }
@@ -220,7 +258,34 @@ public class AppPackagesHelper {
                     return true;
                 }
             }
-            // 3. 常见系统设置包逐个尝试（标准 Android 与 TCL 定制固件）
+            // 3. 模糊定位：动态扫描已安装应用中「设置类」的可启动应用
+            //    （包名含 settings 或应用名含「设置」，适配各品牌定制电视，如 TCL/雷鸟/创维/海信等）
+            List<ApplicationInfo> apps = pm.getInstalledApplications(0);
+            for (ApplicationInfo ai : apps) {
+                String pkg = ai.packageName;
+                if (pkg == null || pkg.equals(context.getPackageName())) continue;
+                String label = null;
+                try {
+                    label = String.valueOf(pm.getApplicationLabel(ai));
+                } catch (Exception ignore) {
+                }
+                boolean isSettings = pkg.toLowerCase().contains("settings")
+                        || (label != null && (label.contains("设置") || label.toLowerCase().contains("settings")));
+                if (isSettings) {
+                    Intent launchIntent = pm.getLaunchIntentForPackage(pkg);
+                    if (launchIntent != null) {
+                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        try {
+                            context.startActivity(launchIntent);
+                            Log.i(IMEService.TAG, String.format("已运行系统应用包[%s]", pkg));
+                            return true;
+                        } catch (Exception ignore) {
+                            // 尝试下一个候选
+                        }
+                    }
+                }
+            }
+            // 4. 已知系统设置包逐个尝试（最后的兜底，覆盖主流 Android 与常见电视品牌）
             String[] settingsPkgs = new String[]{"com.android.settings", "com.tcl.settings"};
             for(String pkg : settingsPkgs){
                 Intent launchIntent = pm.getLaunchIntentForPackage(pkg);
