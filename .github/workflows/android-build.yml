@@ -35,6 +35,9 @@ jobs:
 
       - name: 配置 Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Google 已移除独立的 tools 包，必须显式覆盖默认值（tools platform-tools），否则 sdkmanager tools 会报 Failed to find package 'tools'
+          packages: 'platform-tools'
 
       - name: 安装 SDK 平台与构建工具
         run: |
