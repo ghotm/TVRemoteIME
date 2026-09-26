@@ -124,7 +124,7 @@ function postFileAction(action){
 			if("ok"==data){
 				selectedPaths = [];
 				fileOperItems.empty();
-				$('.file-operations').addClass('hide');
+				$('.file-operations').addClass('hidden');
 				selectedPathId = 0;
 				setTimeout(function(){
 					loadFileList(curPath);
@@ -226,7 +226,7 @@ function addFile(type, name, path){
 	html.push(name);
 	html.push('</div><div class="file-oper-del">X</div></div>');
 	fileOperItems.append(html.join(''));
-	$('.file-operations').removeClass('hide');
+	$('.file-operations').removeClass('hidden');
 }
 function removeFile(id, path){
 	var rid = -1;
@@ -242,7 +242,7 @@ function removeFile(id, path){
 	$('#fileOperItem' + id).remove();
 	if(selectedPaths.length == 0){
 		selectedPathId = 0;
-		$('.file-operations').addClass('hide');
+		$('.file-operations').addClass('hidden');
 	}
 }
 function loadTVList(){
