@@ -6,7 +6,9 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.provider.Settings;
 import android.util.Log;
@@ -186,23 +188,71 @@ public class AppPackagesHelper {
             Log.e(IMEService.TAG, String.format("运行应用包[%s]出错", packageName), ex);
         }
     }
-    public static void runSystemPackage(final String packageName, final Context context){
+    /**
+     * 打开系统设置（多级回退，兼容标准系统与 TCL 等定制固件）
+     * 1. 参数为显式包名 → 按包名启动其入口
+     * 2. 参数为标准 action → 解析存在才启动（避免 ActivityNotFoundException）
+     * 3. 常见系统设置包（com.android.settings / com.tcl.settings 等）逐个尝试启动
+     * 4. 全部失败返回 false（调用方提示用户）
+     */
+    public static boolean runSystemPackage(final String packageName, final Context context){
         try {
-            Intent intent = new Intent(packageName);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            context.startActivity(intent);
-            Log.i(IMEService.TAG, String.format("已运行系统应用包[%s]", packageName));
+            PackageManager pm = context.getPackageManager();
+            // 1. 显式包名：直接按其启动入口启动
+            if(packageName != null && packageName.contains(".")){
+                Intent pkgIntent = new Intent(Intent.ACTION_MAIN);
+                pkgIntent.setPackage(packageName);
+                pkgIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+                pkgIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                if(pm.resolveActivity(pkgIntent, 0) != null){
+                    context.startActivity(pkgIntent);
+                    Log.i(IMEService.TAG, String.format("已运行系统应用包[%s]", packageName));
+                    return true;
+                }
+            }
+            // 2. 标准 action（如 android.settings.SETTINGS）：解析存在才启动
+            if(packageName != null && !packageName.contains(".")){
+                Intent actionIntent = new Intent(packageName);
+                actionIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                if(pm.resolveActivity(actionIntent, 0) != null){
+                    context.startActivity(actionIntent);
+                    Log.i(IMEService.TAG, String.format("已运行系统应用包[%s]", packageName));
+                    return true;
+                }
+            }
+            // 3. 常见系统设置包逐个尝试（标准 Android 与 TCL 定制固件）
+            String[] settingsPkgs = new String[]{"com.android.settings", "com.tcl.settings"};
+            for(String pkg : settingsPkgs){
+                Intent launchIntent = pm.getLaunchIntentForPackage(pkg);
+                if(launchIntent != null){
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(launchIntent);
+                    Log.i(IMEService.TAG, String.format("已运行系统应用包[%s]", pkg));
+                    return true;
+                }
+            }
         }catch (Exception ex){
             Log.e(IMEService.TAG, String.format("运行系统应用包[%s]出错", packageName), ex);
         }
+        return false;
     }
+
     public static byte[] getAppIcon(String packageName, Context context){
         ApplicationInfo applicationInfo = getApplicationInfo(packageName, context);
         if(applicationInfo == null) return  null;
-        BitmapDrawable bitmap = (BitmapDrawable)applicationInfo.loadIcon(context.getPackageManager());
+        Drawable icon = applicationInfo.loadIcon(context.getPackageManager());
+        if(icon == null) return null;
+        // Android 8.0+ 自适应图标等并非 BitmapDrawable 子类，不能强制转型；
+        // 统一用 Canvas 绘制到 Bitmap（兼容任意 Drawable 实现）
+        int width = Math.max(icon.getIntrinsicWidth(), 1);
+        int height = Math.max(icon.getIntrinsicHeight(), 1);
+        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        icon.setBounds(0, 0, width, height);
+        icon.draw(canvas);
 
         ByteArrayOutputStream data = new ByteArrayOutputStream();
-        bitmap.getBitmap().compress(Bitmap.CompressFormat.PNG, 100, data);
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, data);
         return data.toByteArray();
     }
 }
