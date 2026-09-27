@@ -314,7 +314,7 @@ public class LiveRequestProcesser implements RequestProcesser {
 
     private String handleApply(String url, String name) throws JSONException {
         if (TextUtils.isEmpty(url)) {
-            return error("缺少直播列表地址");
+            return errorJson("缺少直播列表地址");
         }
         LiveListConverter.Result conv;
         try {
@@ -322,10 +322,10 @@ public class LiveRequestProcesser implements RequestProcesser {
             conv = LiveListConverter.convert(fetched.data, fetched.charset);
         } catch (Exception e) {
             Log.e(TAG, "下载直播列表失败: " + url, e);
-            return error("下载直播列表失败：" + shorten(e.getMessage()));
+            return errorJson("下载直播列表失败：" + shorten(e.getMessage()));
         }
         if (conv.sourceCount == 0) {
-            return error("未解析到任何直播源（可能格式不支持或列表为空）");
+            return errorJson("未解析到任何直播源（可能格式不支持或列表为空）");
         }
         synchronized (RemoteServerFileManager.tvFileLock) {
             try {
@@ -342,7 +342,7 @@ public class LiveRequestProcesser implements RequestProcesser {
                 return o.toString();
             } catch (Exception e) {
                 Log.e(TAG, "写入直播源失败", e);
-                return error("写入直播源失败：" + e.getMessage());
+                return errorJson("写入直播源失败：" + e.getMessage());
             }
         }
     }
@@ -351,12 +351,12 @@ public class LiveRequestProcesser implements RequestProcesser {
         if (TextUtils.isEmpty(file)
                 || !BACKUP_NAME.matcher(file).matches()
                 || file.contains("/") || file.contains("\\") || file.contains("..")) {
-            return error("备份文件名非法");
+            return errorJson("备份文件名非法");
         }
         synchronized (RemoteServerFileManager.tvFileLock) {
             File bak = new File(RemoteServerFileManager.baseDir, file);
             if (!bak.exists()) {
-                return error("备份不存在");
+                return errorJson("备份不存在");
             }
             try {
                 // 还原前把当前内容也备份一份，使「还原」本身可逆
@@ -370,9 +370,20 @@ public class LiveRequestProcesser implements RequestProcesser {
                 return o.toString();
             } catch (Exception e) {
                 Log.e(TAG, "还原直播源失败", e);
-                return error("还原失败：" + e.getMessage());
+                return errorJson("还原失败：" + e.getMessage());
             }
         }
+    }
+
+    /** 返回 code=error 的 JSON 字符串（用于需要返回 String 的内部方法）。 */
+    private static String errorJson(String msg) {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("code", "error");
+            o.put("msg", msg == null ? "" : msg);
+        } catch (JSONException ignored) {
+        }
+        return o.toString();
     }
 
     /** 把当前 tv.txt 备份为 tv.txt.bak.<毫秒时间戳>，返回备份文件名（无源文件返回 null）。 */
