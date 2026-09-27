@@ -193,9 +193,75 @@ public class LiveRequestProcesser implements RequestProcesser {
     }
 
     private void refreshSourcesSync() {
+        // 锁外执行全部网络扫描（可能耗时数分钟），避免长时间持 liveSourcesLock 阻塞
+        // handleSources / addSource / removeSource / merge 与前端轮询
+        JSONArray scanned = new JSONArray();
+        try {
+            String body = fetchResourcesJson();
+            JSONArray resources = new JSONObject(body).optJSONArray("resources");
+            if (resources != null) {
+                for (int i = 0; i < resources.length(); i++) {
+                    JSONObject res = resources.optJSONObject(i);
+                    if (res == null || !RESOURCES_CATEGORY_TVBOX.equals(res.optString("category"))) {
+                        continue;
+                    }
+                    String configName = res.optString("name", "配置");
+                    String configUrl = res.optString("url", "");
+                    if (TextUtils.isEmpty(configUrl)) {
+                        continue;
+                    }
+                    try {
+                        HttpFetcher.Fetched fetched = HttpFetcher.fetchBytes(configUrl, null, CONFIG_TIMEOUT_MS, CONFIG_TIMEOUT_MS);
+                        String cfgBody = LiveListConverter.decode(fetched.data, fetched.charset);
+                        JSONObject cfg = new JSONObject(cfgBody);
+                        JSONArray lives = cfg.optJSONArray("lives");
+                        if (lives == null) {
+                            continue;
+                        }
+                        for (int j = 0; j < lives.length(); j++) {
+                            JSONObject live = lives.optJSONObject(j);
+                            if (live == null) {
+                                continue;
+                            }
+                            String name = live.optString("name", "直播源");
+                            String url = resolveUrl(configUrl, live.optString("url", ""));
+                            if (TextUtils.isEmpty(url)) {
+                                continue;
+                            }
+                            JSONObject item = new JSONObject();
+                            item.put("key", sourceKey(url, "s"));
+                            item.put("name", name);
+                            item.put("configName", configName);
+                            item.put("url", url);
+                            item.put("error", "");
+                            item.put("custom", false);
+                            scanned.put(item);
+                        }
+                    } catch (Exception e) {
+                        JSONObject item = new JSONObject();
+                        try {
+                            item.put("key", "");
+                            item.put("name", "");
+                            item.put("configName", configName);
+                            item.put("url", "");
+                            item.put("error", shorten(e.getMessage()));
+                            item.put("custom", false);
+                            scanned.put(item);
+                        } catch (JSONException je) {
+                            Log.w(TAG, "构造失败源条目出错: " + configName, je);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "拉取 resources.json 失败", e);
+        }
+        // 锁内：合并自定义源（刷新不覆盖）并原子保存
         synchronized (liveSourcesLock) {
-            // 先收集现有自定义源，刷新不覆盖用户添加的源
-            JSONArray customItems = new JSONArray();
+            JSONArray list = new JSONArray();
+            for (int i = 0; i < scanned.length(); i++) {
+                list.put(scanned.optJSONObject(i));
+            }
             JSONObject oldCache = loadSourcesCache();
             if (oldCache != null) {
                 JSONArray oldList = oldCache.optJSONArray("list");
@@ -203,77 +269,10 @@ public class LiveRequestProcesser implements RequestProcesser {
                     for (int i = 0; i < oldList.length(); i++) {
                         JSONObject it = oldList.optJSONObject(i);
                         if (it != null && it.optBoolean("custom", false)) {
-                            customItems.put(it);
+                            list.put(it);
                         }
                     }
                 }
-            }
-            JSONArray list = new JSONArray();
-            JSONArray resources = null;
-            try {
-                String body = fetchResourcesJson();
-                resources = new JSONObject(body).optJSONArray("resources");
-            } catch (Exception e) {
-                Log.e(TAG, "拉取 resources.json 失败", e);
-            }
-            if (resources == null) {
-                resources = new JSONArray();
-            }
-            for (int i = 0; i < resources.length(); i++) {
-                JSONObject res = resources.optJSONObject(i);
-                if (res == null || !RESOURCES_CATEGORY_TVBOX.equals(res.optString("category"))) {
-                    continue;
-                }
-                String configName = res.optString("name", "配置");
-                String configUrl = res.optString("url", "");
-                if (TextUtils.isEmpty(configUrl)) {
-                    continue;
-                }
-                try {
-                    HttpFetcher.Fetched fetched = HttpFetcher.fetchBytes(configUrl, null, CONFIG_TIMEOUT_MS, CONFIG_TIMEOUT_MS);
-                    String body = LiveListConverter.decode(fetched.data, fetched.charset);
-                    JSONObject cfg = new JSONObject(body);
-                    JSONArray lives = cfg.optJSONArray("lives");
-                    if (lives == null) {
-                        continue;
-                    }
-                    for (int j = 0; j < lives.length(); j++) {
-                        JSONObject live = lives.optJSONObject(j);
-                        if (live == null) {
-                            continue;
-                        }
-                        String name = live.optString("name", "直播源");
-                        String url = resolveUrl(configUrl, live.optString("url", ""));
-                        if (TextUtils.isEmpty(url)) {
-                            continue;
-                        }
-                        JSONObject item = new JSONObject();
-                        item.put("key", sourceKey(url, "s"));
-                        item.put("name", name);
-                        item.put("configName", configName);
-                        item.put("url", url);
-                        item.put("error", "");
-                        item.put("custom", false);
-                        list.put(item);
-                    }
-                } catch (Exception e) {
-                    JSONObject item = new JSONObject();
-                    try {
-                        item.put("key", "");
-                        item.put("name", "");
-                        item.put("configName", configName);
-                        item.put("url", "");
-                        item.put("error", shorten(e.getMessage()));
-                        item.put("custom", false);
-                        list.put(item);
-                    } catch (JSONException je) {
-                        Log.w(TAG, "构造失败源条目出错: " + configName, je);
-                    }
-                }
-            }
-            // 追加用户自定义源（刷新不覆盖）
-            for (int i = 0; i < customItems.length(); i++) {
-                list.put(customItems.optJSONObject(i));
             }
             saveSourcesCache(list, System.currentTimeMillis());
         }
@@ -582,10 +581,10 @@ public class LiveRequestProcesser implements RequestProcesser {
         }
         // ③ 锁内二次查重（防 TOCTOU）后写入
         synchronized (liveSourcesLock) {
-            if (findByUrl(loadSourcesCache(), napi) != null) {
+            JSONObject cache = loadSourcesCache();
+            if (findByUrl(cache, napi) != null) {
                 return errorJson("该源已存在");
             }
-            JSONObject cache = loadSourcesCache();
             JSONArray list = cache != null ? cache.optJSONArray("list") : new JSONArray();
             JSONObject item = new JSONObject();
             item.put("key", sourceKey(url, "c"));

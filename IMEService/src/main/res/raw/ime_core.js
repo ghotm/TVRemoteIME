@@ -1259,7 +1259,7 @@ function liveRestore(){
 		for(var i=0;i<list.length;i++){
 			var t = new Date(list[i].time);
 			html.push('<div class="live-backup-item"><span>' + t.toLocaleString() + '（' + Math.round(list[i].size/1024) + 'KB）</span>');
-			html.push('<button type="button" class="btn-secondary btn-small live-backup-restore" data-file="' + list[i].file + '">还原</button></div>');
+			html.push('<button type="button" class="btn-secondary btn-small live-backup-restore" data-file="' + esc(list[i].file) + '">还原</button></div>');
 		}
 		$('#liveBackupList').html(html.join('')).removeClass('hidden');
 		liveUpdateStatus('请选择要还原的备份', false);
