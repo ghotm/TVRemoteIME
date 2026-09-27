@@ -38,11 +38,30 @@ public class AppRequestProcesser implements RequestProcesser {
                 case "/apps":
                     return RemoteServer.createJSONResponse(NanoHTTPD.Response.Status.OK,
                             AppPackagesHelper.getQueryAppInfoJsonString(this.context, "true".equals(params.get("system"))));
-                case "/uninstall":
-                    if (params.get("packageName") != null) {
-                        AppPackagesHelper.uninstallPackage(params.get("packageName"), this.context);
+                case "/uninstall": {
+                    String result = params.get("packageName") == null
+                            ? "error:缺少包名"
+                            : AppPackagesHelper.uninstallPackage(params.get("packageName"), this.context);
+                    String code;
+                    if ("ok".equals(result)) {
+                        code = "ok";
+                    } else if ("launch".equals(result)) {
+                        code = "launch";
+                    } else {
+                        code = "error";
                     }
-                    return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.OK,"ok");
+                    String msg;
+                    if ("ok".equals(code)) {
+                        msg = "卸载成功";
+                    } else if ("launch".equals(code)) {
+                        msg = "已打开系统卸载界面，请在设备上确认卸载";
+                    } else {
+                        msg = (result != null && result.startsWith("error:")) ? result.substring(6) : String.valueOf(result);
+                    }
+                    String safeMsg = msg.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ");
+                    return RemoteServer.createJSONResponse(NanoHTTPD.Response.Status.OK,
+                            "{\"code\":\"" + code + "\",\"msg\":\"" + safeMsg + "\"}");
+                }
                 case "/run":
                     if (params.get("packageName") != null) {
                         AppPackagesHelper.runPackage(params.get("packageName"), this.context);

@@ -186,6 +186,39 @@ public class AdbHelper {
         }
     }
 
+    /**
+     * 同步执行 shell 命令并返回输出（读取到流结束或超时）。失败返回 null。
+     * 用于需要结果反馈的场景（如 pm uninstall）。
+     */
+    public String execShell(String command, long timeoutMs) {
+        if (command == null) return null;
+        if (connection == null) try2Connect();
+        if (connection == null) return null;
+        AdbStream stream = null;
+        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        try {
+            stream = connection.open("shell:" + command);
+            long deadline = System.currentTimeMillis() + timeoutMs;
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    byte[] chunk = stream.read();
+                    if (chunk == null || chunk.length == 0) continue;
+                    buffer.write(chunk, 0, chunk.length);
+                } catch (IOException eof) {
+                    break;
+                }
+            }
+            return buffer.toString("UTF-8");
+        } catch (Exception e) {
+            Log.e(TAG, "execShell 执行失败: " + command, e);
+            return null;
+        } finally {
+            if (stream != null) {
+                try { stream.close(); } catch (Exception ignored) { }
+            }
+        }
+    }
+
     private static AdbHelper instance = null;
     public static AdbHelper getInstance(){
         return instance;

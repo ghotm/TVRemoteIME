@@ -51,6 +51,7 @@ public class MouseRequestProcesser implements RequestProcesser {
                 case "/mouse/longclick":
                 case "/mouse/show":
                 case "/mouse/hide":
+                case "/mouse/openAccessibility":
                     return true;
             }
         } else if (session.getMethod() == NanoHTTPD.Method.GET) {
@@ -67,6 +68,21 @@ public class MouseRequestProcesser implements RequestProcesser {
         // 处理状态查询
         if ("/mouse/status".equals(fileName)) {
             return handleStatus();
+        }
+
+        // 打开系统辅助功能设置页（用于引导用户启用触控服务），不依赖服务是否已启用
+        if ("/mouse/openAccessibility".equals(fileName)) {
+            try {
+                Intent accessibilityIntent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+                accessibilityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(accessibilityIntent);
+                return RemoteServer.createJSONResponse(NanoHTTPD.Response.Status.OK,
+                        "{\"status\":\"ok\"}");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to open accessibility settings", e);
+                return RemoteServer.createJSONResponse(NanoHTTPD.Response.Status.OK,
+                        "{\"status\":\"error\",\"message\":\"无法打开辅助功能设置\"}");
+            }
         }
 
         // 检查辅助功能服务是否已启用

@@ -1750,3 +1750,18 @@ body {
 		display: block;
 	}
 }
+
+/* 触摸板：未启用触控服务时的引导按钮 */
+#adb-enable {
+	cursor: pointer;
+	border: 1px solid #4a90e2;
+	background: #4a90e2;
+	color: #fff;
+	border-radius: 4px;
+	padding: 2px 10px;
+	font-size: 12px;
+	margin-left: 8px;
+}
+#adb-enable:hover {
+	background: #357ab8;
+}

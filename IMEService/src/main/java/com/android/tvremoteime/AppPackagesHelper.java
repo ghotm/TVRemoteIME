@@ -237,8 +237,63 @@ public class AppPackagesHelper {
      * 3. 传统卸载页：android.intent.action.UNINSTALL_PACKAGE
      * 4. 通过内置 ADB 客户端执行 pm uninstall（需电视已开启网络调试）
      */
-    public static void uninstallPackage(final String packageName, final Context context){
-        if(getApplicationInfo(packageName, context) == null)return;
+    public static String uninstallPackage(final String packageName, final Context context){
+        if(getApplicationInfo(packageName, context) == null){
+            return "error:应用不存在";
+        }
+        // 1. 优先：通过内置 ADB 静默卸载并校验（无需用户在设备上确认，最可靠）
+        String adbResult = uninstallByAdbAndVerify(packageName, context);
+        if("ok".equals(adbResult)){
+            Log.i(IMEService.TAG, String.format("已通过 ADB 卸载应用包[%s]", packageName));
+            return "ok";
+        }
+        // 2. 回退：打开系统卸载界面（需用户在设备上确认；Android 10+ 可能因后台启动限制而不显示）
+        if(launchSystemUninstall(packageName, context)){
+            Log.i(IMEService.TAG, String.format("已打开系统卸载界面[%s]", packageName));
+            return "launch";
+        }
+        Log.e(IMEService.TAG, String.format("删除应用包[%s]失败：ADB(%s)，且系统无卸载入口", packageName, adbResult));
+        return "error:" + (adbResult == null ? "ADB 不可用且系统无卸载入口" : adbResult);
+    }
+
+    /**
+     * 通过内置 ADB 客户端执行 pm uninstall 并校验是否真的卸载成功
+     * @return "ok" 表示卸载成功；否则返回失败原因描述
+     */
+    private static String uninstallByAdbAndVerify(final String packageName, final Context context){
+        try {
+            if(AdbHelper.getInstance() == null){
+                AdbHelper.createInstance();
+            }
+            AdbHelper.initService(context);
+            AdbHelper helper = AdbHelper.getInstance();
+            if(helper == null){
+                return "ADB 未初始化";
+            }
+            String output = helper.execShell("pm uninstall --user 0 " + packageName, 8000);
+            if(output == null){
+                return "ADB 连接不可用（请在设备上开启网络调试后重试）";
+            }
+            String text = output.trim();
+            if(text.contains("Success")){
+                return "ok";
+            }
+            // 部分固件卸载成功但输出为空，再核对一次包是否仍然存在
+            if(getApplicationInfo(packageName, context) == null){
+                return "ok";
+            }
+            return text.isEmpty() ? "ADB 卸载失败（无输出）" : text;
+        }catch (Exception ex){
+            Log.e(IMEService.TAG, String.format("通过 ADB 卸载应用包[%s]出错", packageName), ex);
+            return "ADB 异常：" + ex.getMessage();
+        }
+    }
+
+    /**
+     * 打开系统卸载界面（显式 → 隐式 → 传统入口）
+     * @return 是否成功启动某个卸载界面
+     */
+    private static boolean launchSystemUninstall(final String packageName, final Context context){
         try {
             PackageManager pm = context.getPackageManager();
             Uri packageUri = Uri.parse("package:" + packageName);
@@ -256,8 +311,7 @@ public class AppPackagesHelper {
                 if(pm.resolveActivity(explicit, 0) != null){
                     try {
                         context.startActivity(explicit);
-                        Log.i(IMEService.TAG, String.format("已删除应用包[%s]（系统卸载界面）", packageName));
-                        return;
+                        return true;
                     } catch (Exception ignore) { }
                 }
             }
@@ -268,8 +322,7 @@ public class AppPackagesHelper {
             intent.setData(packageUri);
             if (pm.resolveActivity(intent, 0) != null) {
                 context.startActivity(intent);
-                Log.i(IMEService.TAG, String.format("已删除应用包[%s]", packageName));
-                return;
+                return true;
             }
             // 3. 传统卸载入口（部分固件用 UNINSTALL_PACKAGE）
             Intent uninstallIntent = new Intent();
@@ -278,37 +331,11 @@ public class AppPackagesHelper {
             uninstallIntent.setData(packageUri);
             if (pm.resolveActivity(uninstallIntent, 0) != null) {
                 context.startActivity(uninstallIntent);
-                Log.i(IMEService.TAG, String.format("已删除应用包[%s]", packageName));
-                return;
+                return true;
             }
-            // 4. 回退：通过内置 ADB 客户端卸载（适用于系统未提供卸载入口的定制电视）
-            if (uninstallPackageByAdb(packageName, context)) {
-                Log.i(IMEService.TAG, String.format("已通过 ADB 卸载应用包[%s]", packageName));
-                return;
-            }
-            Log.e(IMEService.TAG, String.format("删除应用包[%s]出错：系统未提供卸载入口，且 ADB 不可用", packageName));
+            return false;
         }catch (Exception ex){
-            Log.e(IMEService.TAG, String.format("删除应用包[%s]出错", packageName), ex);
-        }
-    }
-
-    /**
-     * 通过内置 ADB 客户端（连接电视自身 adb 服务）执行 pm uninstall
-     */
-    private static boolean uninstallPackageByAdb(final String packageName, final Context context){
-        try {
-            if(AdbHelper.getInstance() == null){
-                AdbHelper.createInstance();
-            }
-            AdbHelper.initService(context);
-            AdbHelper helper = AdbHelper.getInstance();
-            if(helper == null){
-                return false;
-            }
-            helper.sendData("shell:pm uninstall --user 0 " + packageName);
-            return true;
-        }catch (Exception ex){
-            Log.e(IMEService.TAG, String.format("通过 ADB 卸载应用包[%s]出错", packageName), ex);
+            Log.e(IMEService.TAG, String.format("打开系统卸载界面[%s]出错", packageName), ex);
             return false;
         }
     }

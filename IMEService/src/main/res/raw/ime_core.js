@@ -109,9 +109,17 @@ function clickApp(id,type){
 	if(2==type&&!confirm("是否确认要卸载应用["+app.text()+"]？"))return;
 	if(2==type&&!confirm("再次确认：将卸载应用["+app.text()+"]，卸载后不可恢复！"))return;
 	$.post(1==type?"/run":"/uninstall",{packageName:app.attr("data-packageName")},function(data){
-		if("ok"==data&&2==type){
-			alert("卸载指令已发送，应用列表将在几秒后自动刷新；若应用仍然存在，说明卸载未成功（可能需要在电视上允许 ADB 调试授权）。");
+		if(1==type)return;
+		var code=(data&&data.code)?data.code:(("ok"==data)?"ok":"error");
+		var msg=(data&&data.msg)?data.msg:"";
+		if("ok"==code){
+			alert("卸载成功！");
+			setTimeout(reloadAppList,1e3);
+		}else if("launch"==code){
+			alert("已打开系统卸载界面，请在设备上确认卸载。\n若设备未显示卸载界面，可尝试在设备上开启网络调试(ADB)后重试。");
 			setTimeout(reloadAppList,3e3);
+		}else{
+			alert("卸载失败："+(msg||"未知原因")+"\n可在设备上开启网络调试(ADB)后重试，或手动卸载。");
 		}
 	});
 }
@@ -661,7 +669,8 @@ var touchpad = {
 	moveThreshold: 10,  // 移动阈值，超过此值不算点击
 	hasMoved: false,
 	lastMoveTime: 0,
-	throttleInterval: 16  // 约60fps的节流
+	throttleInterval: 16,  // 约60fps的节流
+	maxFingers: 0  // 本次触摸过程中出现过的最大手指数（用于判定双指右键）
 };
 
 // 初始化触摸板
@@ -754,6 +763,7 @@ function onTouchpadStart(e) {
 	touchpad.tapStartTime = Date.now();
 	touchpad.hasMoved = false;
 	touchpad.fingers = e.touches ? e.touches.length : 1;
+	touchpad.maxFingers = touchpad.fingers;
 }
 
 // 触摸移动
@@ -776,9 +786,12 @@ function onTouchpadMove(e) {
 		touchpad.hasMoved = true;
 	}
 
-	// 更新手指数量
+	// 更新手指数量（记录出现过的最大手指数，供双指右键判定）
 	if (e.touches) {
 		touchpad.fingers = e.touches.length;
+		if (touchpad.fingers > touchpad.maxFingers) {
+			touchpad.maxFingers = touchpad.fingers;
+		}
 	}
 
 	if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
@@ -802,9 +815,14 @@ function onTouchpadEnd(e) {
 
 	var tapDuration = Date.now() - touchpad.tapStartTime;
 
+	// 综合本次触摸过程中出现过的最大手指数，避免双指轻点被判为单指左键
+	var fingers = Math.max(touchpad.fingers || 0, touchpad.maxFingers || 0);
+	if (e.touches && e.touches.length > fingers) fingers = e.touches.length;
+	if (e.changedTouches && e.changedTouches.length > fingers) fingers = e.changedTouches.length;
+
 	// 快速点击且没有明显移动 = 点击
 	if (tapDuration < 300 && !touchpad.hasMoved) {
-		if (touchpad.fingers >= 2) {
+		if (fingers >= 2) {
 			mouseClick(1);  // 双指 = 右键
 		} else {
 			mouseClick(0);  // 单指 = 左键
@@ -813,6 +831,7 @@ function onTouchpadEnd(e) {
 
 	touchpad.tracking = false;
 	touchpad.fingers = 0;
+	touchpad.maxFingers = 0;
 }
 
 // 发送鼠标移动
@@ -899,17 +918,28 @@ function checkAdbStatus() {
 	$.get("/mouse/status", function(data) {
 		if (data && data.serviceEnabled) {
 			$('#adb-status').text('触控服务: 已启用').removeClass('disconnected').addClass('connected');
+			$('#adb-enable').addClass('hidden');
 		} else {
 			$('#adb-status').text('触控服务: 未启用').removeClass('connected').addClass('disconnected');
+			$('#adb-enable').removeClass('hidden');
 		}
 	}).fail(function() {
 		$('#adb-status').text('触控服务: 未启用').removeClass('connected').addClass('disconnected');
+		$('#adb-enable').removeClass('hidden');
 	});
 }
 
 // 页面加载完成后初始化触摸板
 $(document).ready(function() {
 	initTouchpad();
+	// 未启用触控服务时，引导用户去系统设置开启
+	$('#adb-enable').on('click', function() {
+		$.post("/mouse/openAccessibility", {}, function() {
+			alert('已尝试打开设备的「辅助功能 / 无障碍」设置，\n请在其中找到「小盒精灵」并开启其触控服务。');
+		}).fail(function() {
+			alert('无法自动打开设置，请在设备上进入「设置 → 辅助功能 / 无障碍」中，\n手动开启「小盒精灵」的触控服务。');
+		});
+	});
 	// 定期检查 ADB 状态
 	checkAdbStatus();
 	setInterval(checkAdbStatus, 10000);
