@@ -43,7 +43,9 @@ public class PlayRequestProcesser implements RequestProcesser {
             case "/play":
                 if (!TextUtils.isEmpty(params.get("playUrl"))) {
                     VideoPlayHelper.playUrl(this.context, params.get("playUrl"), 0,
-                        "true".equalsIgnoreCase(params.get("useSystem")));
+                        "true".equalsIgnoreCase(params.get("useSystem")),
+                        "true".equalsIgnoreCase(params.get("forceVod")),
+                        params.get("title"));
                 }
                 return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.OK, "ok");
 

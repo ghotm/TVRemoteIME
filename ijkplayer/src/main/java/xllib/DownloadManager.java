@@ -31,7 +31,12 @@ public class DownloadManager {
 
     public void init(Context context){
         if(this.context == null) {
-            XLTaskHelper.init(context);
+            try {
+                XLTaskHelper.init(context);
+            } catch (Throwable ignored) {
+                // 迅雷 SDK 初始化失败时忽略：http(s) 直播/直链媒体不依赖迅雷，
+                // 由 ijkplayer 直接播放（见 DownloadTask / FileUtils.isLiveMedia）
+            }
         }
         this.context = context;
     }

@@ -72,6 +72,8 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
     private String mVideoTitle;
     private int mVideoIndex;
     private Uri mVideoUri;
+    /** 强制按「点播」播放（影视仓等 VOD 场景）：忽略 isLiveMedia() 对 http(s) 直链的直播启发式。 */
+    private boolean forceVod = false;
 
     protected IjkVideoView mVideoView;
     private TableLayout mHudView;
@@ -176,35 +178,65 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
     };
 
     public static <T extends XLVideoPlayActivity> Intent newIntent(Class<T> cls, Context context, String videoPath, String videoTitle, int videoIndex) {
+        return newIntent(cls, context, videoPath, videoTitle, videoIndex, false);
+    }
+    public static <T extends XLVideoPlayActivity> Intent newIntent(Class<T> cls, Context context, String videoPath, String videoTitle, int videoIndex, boolean forceVod) {
         Intent intent = new Intent(context, cls);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         intent.putExtra("videoPath", videoPath);
         intent.putExtra("videoTitle", videoTitle);
         intent.putExtra("videoIndex", videoIndex);
+        intent.putExtra("forceVod", forceVod);
         return intent;
     }
     public static <T extends XLVideoPlayActivity> void intentTo(Class<T> cls, Context context, String videoPath, String videoTitle) {
-        intentTo(cls, context, videoPath, videoTitle, 0);
+        intentTo(cls, context, videoPath, videoTitle, 0, false);
     }
     public static <T extends XLVideoPlayActivity> void intentTo(Class<T> cls, Context context, String videoPath, String videoTitle, int videoIndex) {
+        intentTo(cls, context, videoPath, videoTitle, videoIndex, false);
+    }
+    public static <T extends XLVideoPlayActivity> void intentTo(Class<T> cls, Context context, String videoPath, String videoTitle, int videoIndex, boolean forceVod) {
         if(isRunning && runningInstance != null){
             if(runningInstance.getClass() == cls) {
-                runningInstance.resetVideoPath(videoPath, videoIndex);
+                runningInstance.resetVideoPath(videoPath, videoIndex, forceVod);
             }else{
                 runningInstance.finish();
-                context.startActivity(newIntent(cls, context, videoPath, videoTitle, videoIndex));
+                context.startActivity(newIntent(cls, context, videoPath, videoTitle, videoIndex, forceVod));
             }
         }
         else {
-            context.startActivity(newIntent(cls, context, videoPath, videoTitle, videoIndex));
+            context.startActivity(newIntent(cls, context, videoPath, videoTitle, videoIndex, forceVod));
         }
     }
 
-    private void resetVideoPath(final String videoPath, final int videoIndex){
+    /**
+     * 外部（如远程控制端）调用：结束当前播放界面。
+     * 供 VideoPlayHelper.stopPlay() 使用，等同于「停止播放」。
+     */
+    public static void stopIfRunning() {
+        final XLVideoPlayActivity instance = runningInstance;
+        if (isRunning && instance != null) {
+            isRunning = false;
+            runningInstance = null;
+            try {
+                instance.runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        instance.finish();
+                    }
+                });
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private void resetVideoPath(final String videoPath, final int videoIndex, final boolean newForceVod){
         if(!TextUtils.isEmpty(videoPath)) {
             handler.post(new Runnable() {
                 @Override
                 public void run() {
+                    // 复用路径不重走 onCreate，需同步更新 forceVod 成员变量（防 VOD↔直播跨 Tab 切换使用旧值）
+                    forceVod = newForceVod;
                     if(videoPath.equalsIgnoreCase(mVideoPath)){
                         if(videoIndex != mVideoIndex){
                             resetVideoIndex(videoIndex);
@@ -213,6 +245,9 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
                         stop();
                         $.id(R.id.app_video_loading).visible();
                         startDownloadTask(videoPath, videoIndex);
+                        // 回写当前集信息：修复「切回上一集」时因 mVideoPath 未更新而被误判为同地址导致 no-op 的问题
+                        mVideoPath = videoPath;
+                        mVideoIndex = videoIndex;
                         playListItemAdapter.notifyDataSetChanged();
                         handler.sendEmptyMessageDelayed(XLVideoPlayActivity.MESSAGE_RESTART_PLAY, 3000);
                     }
@@ -247,7 +282,9 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
             finish();
             return;
         }
-        isLive = xlDownloadManager.taskInstance().isLiveMedia();
+        // forceVod=true（影视仓点播）：强制按点播处理，避免 http(s) 直链（m3u8/mp4）被
+        // isLiveMedia 启发式误判为直播，导致 onResume seekTo(0) 丢进度、缓冲 3s 提前 resume。
+        isLive = !forceVod && xlDownloadManager.taskInstance().isLiveMedia();
     }
 
     @Override
@@ -266,6 +303,7 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
         mVideoPath = getIntent().getStringExtra("videoPath");
         mVideoTitle = getIntent().getStringExtra("videoTitle");
         mVideoIndex = getIntent().getIntExtra("videoIndex", 0);
+        forceVod = getIntent().getBooleanExtra("forceVod", false);
 
         Intent intent = getIntent();
         String intentAction = intent.getAction();

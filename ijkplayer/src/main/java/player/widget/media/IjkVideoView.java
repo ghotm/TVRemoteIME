@@ -68,6 +68,9 @@ public class IjkVideoView extends FrameLayout implements MediaController.MediaPl
     private Uri mUri;
     private Map<String, String> mHeaders;
 
+    /** 播放 http(s) 流时的默认 User-Agent（影视仓等场景注入），null 则不设置。 */
+    public static volatile String sUserAgent = null;
+
     // all possible internal states
     private static final int STATE_ERROR = -1;
     private static final int STATE_IDLE = 0;
@@ -1111,6 +1114,10 @@ public class IjkVideoView extends FrameLayout implements MediaController.MediaPl
                     ijkMediaPlayer.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "start-on-prepared", 0);
 
                     ijkMediaPlayer.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "http-detect-range-support", 0);
+
+                    if (sUserAgent != null) {
+                        ijkMediaPlayer.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "user-agent", sUserAgent);
+                    }
 
                     ijkMediaPlayer.setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "skip_loop_filter", 48);
                 }
