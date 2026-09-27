@@ -196,7 +196,7 @@ public class LiveRequestProcesser implements RequestProcesser {
                         continue;
                     }
                     String name = live.optString("name", "直播源");
-                    String url = live.optString("url", "");
+                    String url = resolveUrl(configUrl, live.optString("url", ""));
                     if (TextUtils.isEmpty(url)) {
                         continue;
                     }
@@ -230,6 +230,69 @@ public class LiveRequestProcesser implements RequestProcesser {
             Log.w(TAG, "GitHub raw 拉取 resources.json 失败，改用 CDN", e);
             return HttpFetcher.fetch(CDN_RESOURCES_URL, null, CONFIG_TIMEOUT_MS, CONFIG_TIMEOUT_MS);
         }
+    }
+
+    /**
+     * 解析相对地址：TVBox 配置中 lives[].url 可能是相对配置文件地址的路径
+     * （如 ./lib/tv/ipv6.m3u、/live/xx.m3u、//cdn.xx/x.m3u）。以配置文件的 URL 为基准拼接为绝对地址。
+     * 采用手写拼接而非 java.net.URI，避免配置 URL 含中文域名时 URI.create 抛异常。
+     */
+    private static String resolveUrl(String base, String url) {
+        if (TextUtils.isEmpty(url)) {
+            return "";
+        }
+        String lower = url.toLowerCase();
+        if (lower.startsWith("http://") || lower.startsWith("https://")) {
+            return url;
+        }
+        if (TextUtils.isEmpty(base)) {
+            return url;
+        }
+        int schemeEnd = base.indexOf("://");
+        if (schemeEnd < 0) {
+            return url;
+        }
+        // 协议相对地址 //host/path
+        if (url.startsWith("//")) {
+            return base.substring(0, schemeEnd + 1) + url;
+        }
+        int pathStart = base.indexOf('/', schemeEnd + 3);
+        String origin = pathStart < 0 ? base : base.substring(0, pathStart);
+        String basePath = pathStart < 0 ? "/" : base.substring(pathStart);
+        // 根相对地址 /path
+        if (url.startsWith("/")) {
+            return origin + url;
+        }
+        // 普通相对地址：取配置文件的目录作为基准
+        int lastSlash = basePath.lastIndexOf('/');
+        String dir = lastSlash >= 0 ? basePath.substring(0, lastSlash + 1) : "/";
+        return origin + normalizePath(dir + url);
+    }
+
+    /** 规范化路径中的 "." 与 ".." 段。 */
+    private static String normalizePath(String path) {
+        String[] parts = path.split("/");
+        java.util.ArrayDeque<String> stack = new java.util.ArrayDeque<>();
+        for (String p : parts) {
+            if (p.isEmpty() || ".".equals(p)) {
+                continue;
+            }
+            if ("..".equals(p)) {
+                if (!stack.isEmpty()) {
+                    stack.removeLast();
+                }
+            } else {
+                stack.addLast(p);
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String p : stack) {
+            sb.append('/').append(p);
+        }
+        if (path.endsWith("/")) {
+            sb.append('/');
+        }
+        return sb.length() == 0 ? "/" : sb.toString();
     }
 
     private JSONObject loadSourcesCache() {
@@ -319,6 +382,10 @@ public class LiveRequestProcesser implements RequestProcesser {
     private String handleApply(String url, String name) throws JSONException {
         if (TextUtils.isEmpty(url)) {
             return errorJson("缺少直播列表地址");
+        }
+        String lowerUrl = url.toLowerCase();
+        if (!lowerUrl.startsWith("http://") && !lowerUrl.startsWith("https://")) {
+            return errorJson("该源地址为相对路径，请先点「刷新」重新获取源列表");
         }
         LiveListConverter.Result conv;
         try {
