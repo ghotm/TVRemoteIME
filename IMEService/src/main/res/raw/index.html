@@ -251,6 +251,14 @@
 							<button type="button" class="btn-secondary btn-small" id="btnLiveRestore">还原备份</button>
 							<button type="button" class="btn-secondary btn-small" id="btnLivePanelClose">收起</button>
 						</div>
+						<div class="live-merge-row">
+							<button type="button" class="btn-primary btn-small" id="btnLiveMerge">合并所选并应用</button>
+						</div>
+						<div class="live-add-form">
+							<input type="text" id="liveAddName" class="input-text" placeholder="源名称（如：iptv-org 中文）" aria-label="源名称">
+							<input type="text" id="liveAddUrl" class="input-text" placeholder="M3U/txt 地址（如 https://iptv-org.github.io/iptv/languages/zho.m3u）" aria-label="源地址">
+							<button type="button" class="btn-primary btn-small" id="liveAddBtn">添加自定义源</button>
+						</div>
 						<div id="liveSourceList" class="live-source-list"></div>
 						<div id="liveBackupList" class="live-backup-list hidden"></div>
 					</div>

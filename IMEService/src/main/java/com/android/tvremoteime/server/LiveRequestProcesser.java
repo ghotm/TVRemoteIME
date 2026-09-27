@@ -57,6 +57,15 @@ public class LiveRequestProcesser implements RequestProcesser {
     private static final int APPLY_READ_TIMEOUT_MS = 15000;
     private static final int MAX_BACKUPS = 3;
 
+    /** 添加自定义源时的探测超时与大小上限（避免大列表阻塞请求线程）。 */
+    private static final int ADD_SOURCE_PROBE_CONNECT_MS = 10000;
+    private static final int ADD_SOURCE_PROBE_READ_MS = 10000;
+    private static final long ADD_SOURCE_PROBE_MAX_BYTES = 2L * 1024 * 1024; // 2MB
+    /** 应用/合并直播列表时的下载上限（直播列表可达数十 MB）。 */
+    private static final long LIVE_LIST_MAX_BYTES = 32L * 1024 * 1024; // 32MB
+    /** 探测因大小/超时未完成时的标记（源仍保存，前端据此提示）。 */
+    private static final String VERIFY_WARNING = "未完整验证（列表较大或响应超时）";
+
     /** 备份文件名：tv.txt.bak.<毫秒时间戳>（严格全匹配，防路径穿越）。 */
     private static final Pattern BACKUP_NAME = Pattern.compile("tv\\.txt\\.bak\\.\\d+");
     private static final String BACKUP_PREFIX = "tv.txt.bak.";
@@ -66,6 +75,8 @@ public class LiveRequestProcesser implements RequestProcesser {
     private final File sourcesCacheFile;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean refreshing = new AtomicBoolean(false);
+    /** 保护 live_sources.json 的读改写（刷新 / 添加 / 删除 / 合并读缓存）。 */
+    private static final Object liveSourcesLock = new Object();
 
     public LiveRequestProcesser(Context context) {
         this.context = context;
@@ -84,6 +95,9 @@ public class LiveRequestProcesser implements RequestProcesser {
             case "/live/backups":
             case "/live/apply":
             case "/live/restore":
+            case "/live/addSource":
+            case "/live/removeSource":
+            case "/live/merge":
                 return true;
             default:
                 return false;
@@ -113,6 +127,21 @@ public class LiveRequestProcesser implements RequestProcesser {
                 case "/live/restore":
                     if (session.getMethod() == NanoHTTPD.Method.POST) {
                         return jsonResponse(handleRestore(params.get("file")));
+                    }
+                    break;
+                case "/live/addSource":
+                    if (session.getMethod() == NanoHTTPD.Method.POST) {
+                        return jsonResponse(handleAddSource(params.get("name"), params.get("url")));
+                    }
+                    break;
+                case "/live/removeSource":
+                    if (session.getMethod() == NanoHTTPD.Method.POST) {
+                        return jsonResponse(handleRemoveSource(params.get("key")));
+                    }
+                    break;
+                case "/live/merge":
+                    if (session.getMethod() == NanoHTTPD.Method.POST) {
+                        return jsonResponse(handleMerge(params.get("keys")));
                     }
                     break;
                 default:
@@ -161,66 +190,90 @@ public class LiveRequestProcesser implements RequestProcesser {
     }
 
     private void refreshSourcesSync() {
-        JSONArray list = new JSONArray();
-        JSONArray resources = null;
-        try {
-            String body = fetchResourcesJson();
-            resources = new JSONObject(body).optJSONArray("resources");
-        } catch (Exception e) {
-            Log.e(TAG, "拉取 resources.json 失败", e);
-        }
-        if (resources == null) {
-            resources = new JSONArray();
-        }
-        for (int i = 0; i < resources.length(); i++) {
-            JSONObject res = resources.optJSONObject(i);
-            if (res == null || !RESOURCES_CATEGORY_TVBOX.equals(res.optString("category"))) {
-                continue;
+        synchronized (liveSourcesLock) {
+            // 先收集现有自定义源，刷新不覆盖用户添加的源
+            JSONArray customItems = new JSONArray();
+            JSONObject oldCache = loadSourcesCache();
+            if (oldCache != null) {
+                JSONArray oldList = oldCache.optJSONArray("list");
+                if (oldList != null) {
+                    for (int i = 0; i < oldList.length(); i++) {
+                        JSONObject it = oldList.optJSONObject(i);
+                        if (it != null && it.optBoolean("custom", false)) {
+                            customItems.put(it);
+                        }
+                    }
+                }
             }
-            String configName = res.optString("name", "配置");
-            String configUrl = res.optString("url", "");
-            if (TextUtils.isEmpty(configUrl)) {
-                continue;
-            }
+            JSONArray list = new JSONArray();
+            JSONArray resources = null;
             try {
-                HttpFetcher.Fetched fetched = HttpFetcher.fetchBytes(configUrl, null, CONFIG_TIMEOUT_MS, CONFIG_TIMEOUT_MS);
-                String body = LiveListConverter.decode(fetched.data, fetched.charset);
-                JSONObject cfg = new JSONObject(body);
-                JSONArray lives = cfg.optJSONArray("lives");
-                if (lives == null) {
+                String body = fetchResourcesJson();
+                resources = new JSONObject(body).optJSONArray("resources");
+            } catch (Exception e) {
+                Log.e(TAG, "拉取 resources.json 失败", e);
+            }
+            if (resources == null) {
+                resources = new JSONArray();
+            }
+            for (int i = 0; i < resources.length(); i++) {
+                JSONObject res = resources.optJSONObject(i);
+                if (res == null || !RESOURCES_CATEGORY_TVBOX.equals(res.optString("category"))) {
                     continue;
                 }
-                for (int j = 0; j < lives.length(); j++) {
-                    JSONObject live = lives.optJSONObject(j);
-                    if (live == null) {
-                        continue;
-                    }
-                    String name = live.optString("name", "直播源");
-                    String url = resolveUrl(configUrl, live.optString("url", ""));
-                    if (TextUtils.isEmpty(url)) {
-                        continue;
-                    }
-                    JSONObject item = new JSONObject();
-                    item.put("name", name);
-                    item.put("configName", configName);
-                    item.put("url", url);
-                    item.put("error", "");
-                    list.put(item);
+                String configName = res.optString("name", "配置");
+                String configUrl = res.optString("url", "");
+                if (TextUtils.isEmpty(configUrl)) {
+                    continue;
                 }
-            } catch (Exception e) {
-                JSONObject item = new JSONObject();
                 try {
-                    item.put("name", "");
-                    item.put("configName", configName);
-                    item.put("url", "");
-                    item.put("error", shorten(e.getMessage()));
-                    list.put(item);
-                } catch (JSONException je) {
-                    Log.w(TAG, "构造失败源条目出错: " + configName, je);
+                    HttpFetcher.Fetched fetched = HttpFetcher.fetchBytes(configUrl, null, CONFIG_TIMEOUT_MS, CONFIG_TIMEOUT_MS);
+                    String body = LiveListConverter.decode(fetched.data, fetched.charset);
+                    JSONObject cfg = new JSONObject(body);
+                    JSONArray lives = cfg.optJSONArray("lives");
+                    if (lives == null) {
+                        continue;
+                    }
+                    for (int j = 0; j < lives.length(); j++) {
+                        JSONObject live = lives.optJSONObject(j);
+                        if (live == null) {
+                            continue;
+                        }
+                        String name = live.optString("name", "直播源");
+                        String url = resolveUrl(configUrl, live.optString("url", ""));
+                        if (TextUtils.isEmpty(url)) {
+                            continue;
+                        }
+                        JSONObject item = new JSONObject();
+                        item.put("key", sourceKey(url, "s"));
+                        item.put("name", name);
+                        item.put("configName", configName);
+                        item.put("url", url);
+                        item.put("error", "");
+                        item.put("custom", false);
+                        list.put(item);
+                    }
+                } catch (Exception e) {
+                    JSONObject item = new JSONObject();
+                    try {
+                        item.put("key", "");
+                        item.put("name", "");
+                        item.put("configName", configName);
+                        item.put("url", "");
+                        item.put("error", shorten(e.getMessage()));
+                        item.put("custom", false);
+                        list.put(item);
+                    } catch (JSONException je) {
+                        Log.w(TAG, "构造失败源条目出错: " + configName, je);
+                    }
                 }
             }
+            // 追加用户自定义源（刷新不覆盖）
+            for (int i = 0; i < customItems.length(); i++) {
+                list.put(customItems.optJSONObject(i));
+            }
+            saveSourcesCache(list, System.currentTimeMillis());
         }
-        saveSourcesCache(list, System.currentTimeMillis());
     }
 
     private String fetchResourcesJson() throws IOException {
@@ -389,7 +442,7 @@ public class LiveRequestProcesser implements RequestProcesser {
         }
         LiveListConverter.Result conv;
         try {
-            HttpFetcher.Fetched fetched = HttpFetcher.fetchBytes(url, null, APPLY_CONNECT_TIMEOUT_MS, APPLY_READ_TIMEOUT_MS);
+            HttpFetcher.Fetched fetched = HttpFetcher.fetchBytes(url, null, APPLY_CONNECT_TIMEOUT_MS, APPLY_READ_TIMEOUT_MS, LIVE_LIST_MAX_BYTES);
             conv = LiveListConverter.convert(fetched.data, fetched.charset);
         } catch (Exception e) {
             Log.e(TAG, "下载直播列表失败: " + url, e);
@@ -413,6 +466,195 @@ public class LiveRequestProcesser implements RequestProcesser {
                 return o.toString();
             } catch (Exception e) {
                 Log.e(TAG, "写入直播源失败", e);
+                return errorJson("写入直播源失败：" + e.getMessage());
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ 自定义源 / 合并
+
+    /** 源 key：前缀（s=扫描、c=自定义）+ 归一化 url 的 hashCode 十六进制，稳定且不含逗号。 */
+    private static String sourceKey(String url, String prefix) {
+        return prefix + Integer.toHexString(normalizeUrl(url).hashCode());
+    }
+
+    /** 归一化 URL：trim 并去掉尾部斜杠（用于 key 与查重）。 */
+    private static String normalizeUrl(String url) {
+        if (url == null) {
+            return "";
+        }
+        String s = url.trim();
+        while (s.endsWith("/")) {
+            s = s.substring(0, s.length() - 1);
+        }
+        return s;
+    }
+
+    /** 按 key 在源列表中查找（key 为空返回 null）。 */
+    private static JSONObject findSourceByKey(JSONArray list, String key) {
+        if (list == null || TextUtils.isEmpty(key)) {
+            return null;
+        }
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject it = list.optJSONObject(i);
+            if (it != null && key.equals(it.optString("key", ""))) {
+                return it;
+            }
+        }
+        return null;
+    }
+
+    /** 添加自定义源：校验 → 查重 → 受限探测 → 保存（探测超限/超时仍保存并标注未完整验证）。 */
+    private String handleAddSource(String name, String url) throws JSONException {
+        if (TextUtils.isEmpty(name)) {
+            return errorJson("请输入源名称");
+        }
+        if (TextUtils.isEmpty(url)) {
+            return errorJson("请输入源地址");
+        }
+        String lower = url.toLowerCase();
+        if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+            return errorJson("仅支持 http/https 地址");
+        }
+        String napi = normalizeUrl(url);
+        synchronized (liveSourcesLock) {
+            JSONObject cache = loadSourcesCache();
+            JSONArray list = cache != null ? cache.optJSONArray("list") : new JSONArray();
+            for (int i = 0; i < list.length(); i++) {
+                JSONObject it = list.optJSONObject(i);
+                if (it != null && napi.equals(normalizeUrl(it.optString("url", "")))) {
+                    return errorJson("该源已存在：" + it.optString("name", ""));
+                }
+            }
+            // 受限探测：只下载前 2MB 判断可解析性，避免大列表阻塞请求线程
+            String warn = "";
+            try {
+                HttpFetcher.Fetched f = HttpFetcher.fetchBytes(url, null,
+                        ADD_SOURCE_PROBE_CONNECT_MS, ADD_SOURCE_PROBE_READ_MS, ADD_SOURCE_PROBE_MAX_BYTES);
+                LiveListConverter.Result r = LiveListConverter.convert(f.data, f.charset);
+                if (r.sourceCount == 0) {
+                    return errorJson("未能从该地址解析到任何直播源");
+                }
+            } catch (Exception e) {
+                String m = e.getMessage() == null ? "" : e.getMessage();
+                if (m.contains("Response too large") || m.contains("timed out") || m.contains("timeout")) {
+                    warn = VERIFY_WARNING;
+                } else if (m.contains("Blocked non-public address")) {
+                    return errorJson("被安全策略拒绝：不支持内网/私有地址");
+                } else if (m.contains("Unsupported protocol")) {
+                    return errorJson("仅支持 http/https 协议");
+                } else {
+                    return errorJson("下载失败：" + shorten(m));
+                }
+            }
+            JSONObject item = new JSONObject();
+            item.put("key", sourceKey(url, "c"));
+            item.put("name", name);
+            item.put("configName", name);
+            item.put("url", url);
+            item.put("error", warn);
+            item.put("custom", true);
+            list.put(item);
+            saveSourcesCache(list, cache != null ? cache.optLong("lastUpdated", 0) : 0);
+            JSONObject o = new JSONObject();
+            o.put("code", "ok");
+            o.put("msg", warn.isEmpty() ? "已添加自定义源" : "已添加自定义源（未完整验证）");
+            if (!warn.isEmpty()) {
+                o.put("saved", true);
+                o.put("warning", warn);
+            }
+            return o.toString();
+        }
+    }
+
+    /** 删除自定义源（仅 custom，扫描源会被刷新重建故不提供删除）。 */
+    private String handleRemoveSource(String key) throws JSONException {
+        if (TextUtils.isEmpty(key)) {
+            return errorJson("缺少源标识");
+        }
+        synchronized (liveSourcesLock) {
+            JSONObject cache = loadSourcesCache();
+            JSONArray list = cache != null ? cache.optJSONArray("list") : new JSONArray();
+            for (int i = 0; i < list.length(); i++) {
+                JSONObject it = list.optJSONObject(i);
+                if (it != null && key.equals(it.optString("key", "")) && it.optBoolean("custom", false)) {
+                    list.remove(i);
+                    saveSourcesCache(list, cache != null ? cache.optLong("lastUpdated", 0) : 0);
+                    JSONObject o = new JSONObject();
+                    o.put("code", "ok");
+                    o.put("msg", "已删除源");
+                    return o.toString();
+                }
+            }
+            return errorJson("源不存在或不可删除（仅自定义源可删除）");
+        }
+    }
+
+    /** 合并勾选的多个源为一个列表并应用（按源分区；单源失败跳过并报告）。 */
+    private String handleMerge(String keys) throws JSONException {
+        if (TextUtils.isEmpty(keys)) {
+            return errorJson("请先勾选要合并的源");
+        }
+        String[] parts = keys.split(",");
+        List<JSONObject> picked = new ArrayList<>();
+        synchronized (liveSourcesLock) {
+            JSONObject cache = loadSourcesCache();
+            JSONArray list = cache != null ? cache.optJSONArray("list") : new JSONArray();
+            for (String k : parts) {
+                k = k.trim();
+                if (k.isEmpty()) {
+                    continue;
+                }
+                JSONObject it = findSourceByKey(list, k);
+                if (it != null) {
+                    picked.add(it);
+                }
+            }
+        }
+        if (picked.isEmpty()) {
+            return errorJson("没有匹配到所选源");
+        }
+        JSONArray failed = new JSONArray();
+        List<LiveListConverter.Source> inputs = new ArrayList<>();
+        for (JSONObject it : picked) {
+            String name = it.optString("name", "源");
+            String url = it.optString("url", "");
+            if (TextUtils.isEmpty(url)) {
+                failed.put(name + ": 地址为空");
+                continue;
+            }
+            try {
+                HttpFetcher.Fetched f = HttpFetcher.fetchBytes(url, null,
+                        APPLY_CONNECT_TIMEOUT_MS, APPLY_READ_TIMEOUT_MS, LIVE_LIST_MAX_BYTES);
+                LiveListConverter.Result r = LiveListConverter.convert(f.data, f.charset);
+                if (r.sourceCount == 0) {
+                    failed.put(name + ": 未解析到任何频道");
+                    continue;
+                }
+                inputs.add(new LiveListConverter.Source(it.optString("key", ""), name, f.data, f.charset));
+            } catch (Exception e) {
+                failed.put(name + ": " + shorten(e.getMessage()));
+            }
+        }
+        if (inputs.isEmpty()) {
+            return errorJson("所选源全部失败，未能合并");
+        }
+        LiveListConverter.Result merged = LiveListConverter.merge(inputs);
+        synchronized (RemoteServerFileManager.tvFileLock) {
+            try {
+                String backup = backupCurrent();
+                writeAtomic(tvFile, merged.text);
+                cleanupBackups();
+                JSONObject o = new JSONObject();
+                o.put("code", "ok");
+                o.put("msg", "已合并 " + inputs.size() + " 个源");
+                o.put("channelCount", merged.channelCount);
+                o.put("sourceCount", merged.sourceCount);
+                o.put("backup", backup == null ? "" : backup);
+                o.put("failed", failed);
+                return o.toString();
+            } catch (Exception e) {
+                Log.e(TAG, "写入合并直播源失败", e);
                 return errorJson("写入直播源失败：" + e.getMessage());
             }
         }

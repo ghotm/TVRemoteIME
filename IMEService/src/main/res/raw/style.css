@@ -1814,3 +1814,11 @@ body {
 
 /* 播放错误提示条（Web 端透出 ijkplayer 错误，便于诊断） */
 .play-error{margin-top:8px;padding:8px 10px;border-radius:4px;background:#fff2f0;border:1px solid #ffccc7;color:#a8071a;font-size:13px;line-height:1.5;word-break:break-all;}
+
+/* 直播自定义源 + 多源合并（任务十） */
+.live-merge-row { margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.live-add-form { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.live-add-form .input-text { flex: 1; min-width: 180px; }
+.live-source-check-wrap { display: inline-flex; align-items: center; }
+.live-source-check-wrap input { width: 18px; height: 18px; cursor: pointer; accent-color: #2d7dd2; }
+.live-source-del { margin-left: 2px; }

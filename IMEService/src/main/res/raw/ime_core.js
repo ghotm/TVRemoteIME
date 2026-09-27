@@ -1200,17 +1200,24 @@ function liveLoadSources(force){
 	}, 'json').fail(function(){ liveUpdateStatus('获取失败，请重试', true); });
 }
 function renderLiveSources(list){
+	var checked = {};
+	$('#liveSourceList input.live-source-check:checked').each(function(){ checked[$(this).attr('data-key')] = true; });
 	var html = [];
 	if(!list || list.length === 0){
 		html.push('<div class="live-source-empty">暂无可用直播源，点击「刷新」重试</div>');
 	}else{
 		for(var i=0;i<list.length;i++){
 			var it = list[i];
-			html.push('<div class="live-source-item' + (it.error ? ' disabled' : '') + '">');
+			var disabled = !!it.error;
+			html.push('<div class="live-source-item' + (disabled ? ' disabled' : '') + '">');
+			html.push('<label class="live-source-check-wrap"><input type="checkbox" class="live-source-check" data-key="' + (it.key || '') + '"' + (checked[it.key] ? ' checked' : '') + (disabled ? ' disabled' : '') + '></label>');
 			html.push('<div class="live-source-name">' + (it.name || '（不可用）') + '</div>');
 			html.push('<div class="live-source-from">来源：' + (it.configName || '-') + (it.error ? ('｜' + it.error) : '') + '</div>');
-			if(!it.error){
+			if(!disabled){
 				html.push('<button type="button" class="btn-primary btn-small live-source-apply" data-url="' + it.url + '" data-name="' + (it.name || '') + '">应用</button>');
+			}
+			if(it.custom){
+				html.push('<button type="button" class="btn-secondary btn-small live-source-del" data-key="' + (it.key || '') + '">删除</button>');
 			}
 			html.push('</div>');
 		}
@@ -1278,3 +1285,55 @@ $('#btnLiveRestore').on('click', function(){ liveRestore(); });
 $('#btnLivePanelClose').on('click', function(){ $('#liveSourcePanel').addClass('hidden'); });
 $(document).on('click', '.live-source-apply', function(){ liveApply($(this).attr('data-url'), $(this).attr('data-name')); });
 $(document).on('click', '.live-backup-restore', function(){ liveBackupRestore($(this).attr('data-file')); });
+// ===== 直播自定义源 + 多源合并（任务十）=====
+function liveAddSource(){
+	var name = $('#liveAddName').val().trim();
+	var url = $('#liveAddUrl').val().trim();
+	if(!name){ alert('请输入源名称'); return; }
+	if(!url){ alert('请输入源地址'); return; }
+	liveUpdateStatus('正在添加并验证…', false);
+	$.post('/live/addSource', {name:name, url:url}, function(data){
+		if(data && data.code === 'ok'){
+			$('#liveAddName').val('');
+			$('#liveAddUrl').val('');
+			alert(data.msg || '已添加自定义源');
+			liveLoadSources(false);
+		}else{
+			alert('添加失败：' + (data && data.msg ? data.msg : '未知错误'));
+			liveUpdateStatus('添加失败', true);
+		}
+	}, 'json').fail(function(){ alert('添加失败：请求出错'); liveUpdateStatus('添加失败', true); });
+}
+function liveRemoveSource(key){
+	if(!key) return;
+	if(!confirm('确定删除该自定义源？')) return;
+	$.post('/live/removeSource', {key:key}, function(data){
+		if(data && data.code === 'ok'){
+			alert('已删除源');
+			liveLoadSources(false);
+		}else{
+			alert('删除失败：' + (data && data.msg ? data.msg : '未知错误'));
+		}
+	}, 'json').fail(function(){ alert('删除失败：请求出错'); });
+}
+function liveMerge(){
+	var keys = [];
+	$('#liveSourceList input.live-source-check:checked').each(function(){ keys.push($(this).attr('data-key')); });
+	if(keys.length === 0){ alert('请先勾选要合并的源'); return; }
+	if(!confirm('将所选 ' + keys.length + ' 个源合并成列表并整体替换当前电视频道列表（原列表会自动备份），确定继续？')) return;
+	liveUpdateStatus('正在合并并应用…', false);
+	$.post('/live/merge', {keys: keys.join(',')}, function(data){
+		if(data && data.code === 'ok'){
+			var extra = (data.failed && data.failed.length) ? ('（' + data.failed.length + ' 个源失败）') : '';
+			alert('已合并 ' + (data.channelCount||0) + ' 个频道 / ' + (data.sourceCount||0) + ' 个源' + extra);
+			loadTVList();
+			liveUpdateStatus('已合并：' + (data.channelCount||0) + ' 频道 / ' + (data.sourceCount||0) + ' 源' + extra, false);
+		}else{
+			alert('合并失败：' + (data && data.msg ? data.msg : '未知错误'));
+			liveUpdateStatus('合并失败', true);
+		}
+	}, 'json').fail(function(){ alert('合并失败：请求出错'); liveUpdateStatus('合并失败', true); });
+}
+$('#btnLiveMerge').on('click', function(){ liveMerge(); });
+$('#liveAddBtn').on('click', function(){ liveAddSource(); });
+$(document).on('click', '.live-source-del', function(){ liveRemoveSource($(this).attr('data-key')); });

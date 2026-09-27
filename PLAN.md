@@ -217,4 +217,68 @@ _Locked via grill（3 项决策）+ oracle Round 1-2 修订 — by Claude + 用�
 - 直播源每日自动更新（用户选手动）。
 - 多源合并追加（用户选替换）。
 - 直播源有效性检测/排序。
-- 加密配置（AES/Base64）与多仓 urls[] 展开（跳过容错）。
+- 加密配置（AES/Base64）与多仓 urls[] 展开（跳过容错）
+
+# Plan: 任务十 — 直播自定义源 + 多源合并
+
+_Locked via grill（4 项决策）— by Claude + 用户_
+
+## Goal
+在视频 Tab 的直播区内,让用户**手动添加并保存自定义直播源**(M3U/txt 地址,含 iptv-org 这类仓库的播放列表),保存进源列表(与从影视仓扫出的源并列,可反复使用/删除);并支持**勾选多个源合并成一个直播列表**(按源分区,每个源内部再按原始分组)。保留现有「单源应用」。
+
+## 用户 grill 决策（4 项）
+1. 能力范围:**手动添加并保存源** + **多源合并成一个列表**(不做内置 iptv-org 快捷入口、不做 API 浏览)。
+2. 交互:源列表每项**加复选框**,顶部「合并所选并应用」;**保留每项单独「应用」**。
+3. 同名频道:不堆在一起,**按源分区**。
+4. 分组显示:**按源分区,且每个源下面再按原始分组**分组 → 分组名 = `源名 | 原始分组`。
+
+## 关键事实（现状代码）
+- `ime_core.js:26-60 parseTVData`:tv.txt 为**单层**格式——`[分组名]` 行 + 组内 `频道名=url` 行;同名频道多行即多源。
+- `LiveListConverter.convert(byte[], charset)` → `Result{text, channelCount, sourceCount, format}`;**当前只产出扁平 text**,没有结构化的「分组→频道→urls」中间模型(合并需要它)。
+- `LiveRequestProcesser`:`/live/sources`(GET,缓存于 `live_sources.json`,schema `{name, configName, url, error}`)、`/live/apply`(单源整体替换 + 时间戳备份)、`/live/backups`、`/live/restore`;`refreshSourcesSync` 扫描 tvbox_config 覆盖写缓存;**当前无自定义源概念,也无合并**。
+- 写入共享锁 `RemoteServerFileManager.tvFileLock`;备份 `tv.txt.bak.<yyyyMMddHHmmssSSS>` 保留 3 份;`HttpFetcher.fetchBytes`(http+https、双超时、重定向每跳 SSRF、gzip、8MB 上限)。
+- iptv-org 播放列表为静态 M3U,无需 Referer;`index.m3u` 体积大(数 MB)。
+
+## Approach
+1. **LiveListConverter 增加结构化模型与合并**(核心):
+   - **替换现有私有 `Channel` 类**(`LiveListConverter.java:40`,含 `group` 字段):改为公开 `Group{ public final String name; public final List<ChannelEntry> channels; }` 与 `ChannelEntry{ public final String name; public final List<String> urls; }`(只读暴露);原 `group` 语义上移到 `Group.name`。**必须删除旧私有 `Channel` 类**(否则同名嵌套类编译冲突)。
+   - 新增 `public static List<Group> parse(byte[] data, String charset)`:把现有 `convertM3u`/`convertTxt` 的解析结果改为产出 `List<Group>`(保持「同 (分组,频道名) 合并多源」「裸 url 归默认分组」等全部既有语义)。
+   - `convert(...)` 改为 `parse` 后调用 `build(...)`(行为不变,兼容 `/live/apply`)。
+   - 新增 `public static Result merge(List<Source> inputs)`:`Source{ String key; String name; byte[] data; String charset; }`。对每个源 `parse` 后,**先为每个源计算唯一显示前缀**——`dispName = cleanName(source.name)`,若与前面任一源重名则追加 `(2)`/`(3)`…(保证**同名源不被聚合**,满足决策 3);再把每个 Group 改名为 `dispName + " | " + clean(g.name)`,按「源顺序 → 组内顺序」线性拼接。**`clean()` 同时清洗分组名与频道名**:`[`/`]`→`(`/`)`、`=`→全角`＝`、`\r`/`\n`→空格(既修 merge,也顺带修既有 `build` 对含 `=`/换行频道名的解析错位)。
+2. **LiveRequestProcesser 扩展**:
+   - **新增缓存专用锁 `private static final Object liveSourcesLock = new Object();`**:`refreshSourcesSync` 的「抽 custom → 重建扫描项 → 追加 custom → saveSourcesCache」整段、`addSource`/`removeSource` 的 read-modify-write、以及 `merge` 读缓存**全部 `synchronized(liveSourcesLock)`**,消除「刷新吞掉刚添加的自定义源」竞态(与 `tvFileLock` 分离:前者保护 `live_sources.json`,后者保护 tv.txt)。
+   - 缓存 schema 每项增加 `key` 与 `custom`(boolean)。**key 必须稳定且不含逗号**:扫描项 `key="s"+Integer.toHexString(normalizeUrl(url).hashCode())`(与电影任务风格一致,刷新后不变);自定义项 `key="c"+Integer.toHexString(normalizeUrl(url).hashCode())`,持久化、刷新不变。`refreshSourcesSync` **保留现有 custom 项**(锁内先 load 抽 custom,重建扫描项后追加 custom,不丢自定义源)。
+   - `POST /live/addSource {name, url}`:校验非空 + http/https(私网/非法给出明确提示)。**探测用受限下载**(`fetchBytes(url, null, 10s, 10s, 2MB)` + `convert`,要求 `sourceCount>0`)避免大列表(如 iptv-org index.m3u)阻塞请求线程;通过 → 写入 `{key, name, configName:name, url, error:"", custom:true}` → `{code:"ok", msg}`;若探测因**大小超限/超时**失败 → **仍保存但 `error` 记为「未完整验证」**(前端标黄,用户仍可尝试应用);若因 URL 非法/SSRF/无频道 → 不保存,`{code:"error", msg}`。
+   - `POST /live/removeSource {key}`:**仅允许删除 custom 源**(扫描源会被刷新重建,不提供删除)→ `{code:"ok"}` / key 不存在 `{code:"error", msg:"源不存在"}`。
+   - `POST /live/merge {keys}`(`keys` 为逗号分隔的源 key —— key 由 `s`/`c`+hex 构成,**不含逗号**,安全;后端在 `liveSourcesLock` 内从缓存查 name/url):逐源 `fetchBytes`+`convert`(单源超时/异常**或解析出 0 频道**,均跳过并记入 `failed[{name, error}]`)→ `LiveListConverter.merge` 合并 → **`synchronized(tvFileLock)` 内**:`backupCurrent` → `writeAtomic(tv.txt)` → `cleanupBackups` → `{code:"ok", msg, channelCount, sourceCount, backup, failed}`。无有效源(全部失败或未勾选)→ `{code:"error", msg:"请先勾选要合并的源"}`。
+   - 保留现有 `/live/apply`(单源替换)。
+   - **大文件**:为直播列表下载新增 `HttpFetcher.fetchBytes(url, headers, connect, read, maxBytes)` 重载(live 用更大上限,如 32MB),其余路径仍默认 8MB。
+3. **前端**:
+   - index.html(`#liveSourcePanel` 内):新增 `.live-add-form`(`#liveAddName` + `#liveAddUrl` + `#liveAddBtn`「添加自定义源」)与顶部 `#btnLiveMerge`「合并所选并应用」;源列表项加复选框 `.live-source-check`(data-key)与自定义源的「删除」按钮 `#liveSourceList` 内 `.live-source-del`。
+   - ime_core.js:`renderLiveSources` 渲染复选框(默认不勾)+ 删除按钮(仅 `custom`);**重渲染前记录已勾选 key、渲染后恢复勾选**(避免 `refreshing` 轮询把用户勾选清空);新增 `liveAddSource()`(POST `/live/addSource` → 成功清空表单+重载 / 失败 alert msg)、`liveRemoveSource(key)`(confirm → POST `/live/removeSource` → 重载)、`liveMerge()`(收集勾选 keys → 空则 alert → POST `/live/merge` → 成功 alert(频道/源数 + 失败源清单)+ `loadTVList()`);绑定 `#btnLiveMerge`、`#liveAddBtn`、`.live-source-del`。
+   - style.css:复选框行、`.live-add-form`、删除按钮、合并按钮样式。
+4. **验证**:`node --check ime_core.js`;括号/全角粗检;提交 feature/movie-station;用户 push CI → BlueStacks 验证;并给出 iptv-org 示例地址(如 `https://iptv-org.github.io/iptv/languages/zho.m3u`、`.../countries/cn.m3u`)供直接添加。
+
+## Key decisions & tradeoffs
+- 自定义源与扫描源**共存于 `live_sources.json`**(以 `custom` 区分);刷新只重建扫描项、保留自定义项。
+- **只允许删除自定义源**(扫描源删除会被下次刷新复活,故不提供删除,保持一致性)。
+- 合并**按源分区**:分组名 `源名 | 原始分组`(源名与分组名中的 `]`/换行清洗为 `)`)。
+- 合并中单源失败**跳过并报告**,不整体失败。
+- 添加自定义源**先探测**(需解析出频道才保存),失败给具体原因。
+- 合并/应用写 tv.txt 与现有 `/live/apply` 共用备份与 `tvFileLock`;还原能力保持(最近 3 份)。
+- **`live_sources.json` 用独立 `liveSourcesLock`**:刷新(后台线程)与 add/remove/merge(请求线程)互斥,防止刷新吞掉刚加的自定义源。
+- **key 稳定**(`s`/`c`+hash(url)),刷新不漂移;合并显示前缀对同名源去重(`(2)`/`(3)`),保证按源分区。
+- 频道名与分组名输出前统一 `clean()`(`=`/换行/方括号),既修 merge 也顺带修既有 build 的解析错位。
+
+## Risks / open questions
+- iptv-org `index.m3u` 体积大(数 MB),需更大下载上限与更长超时;超大列表转换耗时可观(同步请求可能等待)→ MVP 用较大超时,必要时后续改后台任务。
+- 合并逐源下载为串行,多个大源时较慢(单源超时兜底)。
+- 自定义源可能需 UA/Referer(本次仍只带默认 UA)→ 失败时报错,Phase 2 再支持。
+- addSource 探测对超大列表只做「受限下载(2MB/10s)」验证,可能把实际不可用的源判为「未完整验证」(前端标黄),需用户点应用实测;这是为避免大源添加时请求线程阻塞的取舍。
+- 大多数公开 IPTV 源本身不稳定/失效,合并后可用率取决于源质量(与既有结论一致)。
+
+## Out of scope
+- 内置 iptv-org 快捷入口、iptv-org API 浏览(用户未选)。
+- 自定义 UA/Referer、本地 m3u8 代理(Phase 2)。
+- 自定义源编辑(删除重建即可)、有效性定时检测、源排序。
+- 合并冲突时的智能去重/优选(按源分区,不做跨源同名合并)。。

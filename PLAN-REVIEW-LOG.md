@@ -174,3 +174,20 @@ PLAN.md 任务五章节已修订；进入 Round 4 复评。
 | 2 | REVISE | 合并判定统一 findByApi（内置源不被扫描重复）、全源 probe 不冻结、uniqueKey 锁内计算、subnav 避让 data-tab、双套 code 约定 |
 | 3 | REVISE | 墓碑集 removedApis 删除持久化、status 覆盖语义、D/E 闭合 |
 | 4 | APPROVED | N1-N4 全部落实；实现级注意点 n2/n3 纳入实现 |
+
+# Plan Review Log: 任务十 — 直播自定义源 + 多源合并
+
+Act 1 (grill) complete — 用户 4 项决策 + 结构示意（源→分组→频道 三级，扁平化为 `源名 | 原始分组`）。MAX_ROUNDS=5。
+
+## Round 1 — oracle（VERDICT: REVISE）
+5 项缺陷：①【高】live_sources.json 无锁，refreshSourcesSync 与 addSource/removeSource 并发会丢自定义源 ②【中】同名源会意外聚合 ③【中】key 生成规则未定义，刷新后漂移 ④【中】clean() 只清洗分组名未清洗频道名（=、换行）⑤【低】新增公开 Channel 与旧私有 Channel 同名嵌套类编译冲突。建议 6-9：sourceCount==0 计入 failed；addSource 探测限大小/超时（2MB/10s）失败仍可存并标 error；前端轮询保留勾选；keys 无逗号分隔冲突。
+
+### Claude's response
+5 项全部采纳 + 4 建议全部采纳。PLAN 修订：新增 `liveSourcesLock`（与 tvFileLock 分离、不嵌套持有）；merge 显示前缀对重名加 (2)/(3)；key=`s`/`c`+hex(hash(normalizeUrl(url))) 稳定无逗号；clean() 同时清洗分组名与频道名；删除旧私有 Channel、改 Group/ChannelEntry；addSource 探测失败分档（超限/超时→保存标「未完整验证」；URL 非法/SSRF/无频道→不保存）；merge 单源异常或 0 频道计入 failed；前端重渲染恢复勾选。
+
+## Round 2 — oracle（VERDICT: APPROVED）
+9 项全部落实，锁设计无死锁。4 项低 severity 实现级注意点（不阻断，纳入实施清单）：
+n1 addSource 需按 key/normalizeUrl 去重（已存在提示），hash 碰撞追加 _1/_2 后缀。
+n2 addSource「保存但未验证」返回 `{code:"ok", saved:true, warning:"未完整验证"}`，前端成功后追加标黄提示。
+n3 HttpFetcher 区分「大小超限/超时」（仍保存）与「SSRF/URL 非法」（不保存）建议用专用异常类型而非消息字符串匹配。
+n4 merge 逐源串行下载可能阻塞请求线程，MVP 接受短超时兜底，后续可改后台任务/并行小池。

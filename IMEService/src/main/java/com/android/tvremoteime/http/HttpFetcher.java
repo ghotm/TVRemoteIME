@@ -59,6 +59,12 @@ public class HttpFetcher {
      */
     public static Fetched fetchBytes(String urlString, Map<String, String> extraHeaders,
                                      int connectTimeoutMs, int readTimeoutMs) throws IOException {
+        return fetchBytes(urlString, extraHeaders, connectTimeoutMs, readTimeoutMs, MAX_RESPONSE_BYTES);
+    }
+
+    /** 同 {@link #fetchBytes(String, Map, int, int)}，但可指定响应大小上限 maxBytes。 */
+    public static Fetched fetchBytes(String urlString, Map<String, String> extraHeaders,
+                                     int connectTimeoutMs, int readTimeoutMs, long maxBytes) throws IOException {
         String current = normalizeIdn(urlString);
         // 第一跳 SSRF 校验
         checkPublicUrl(current);
@@ -108,9 +114,9 @@ public class HttpFetcher {
                 if ("gzip".equalsIgnoreCase(conn.getContentEncoding())) {
                     is = new GZIPInputStream(is);
                 }
-                byte[] bytes = readLimited(is);
+                byte[] bytes = readLimited(is, maxBytes);
                 if (bytes == null) {
-                    throw new IOException("Response too large (>8MB) at " + current);
+                    throw new IOException("Response too large (>" + maxBytes + " bytes) at " + current);
                 }
                 return new Fetched(bytes, parseCharset(conn.getContentType()));
             } finally {
@@ -120,7 +126,7 @@ public class HttpFetcher {
         throw new IOException("Too many redirects");
     }
 
-    private static byte[] readLimited(InputStream is) throws IOException {
+    private static byte[] readLimited(InputStream is, long maxBytes) throws IOException {
         try {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             byte[] buf = new byte[8192];
@@ -128,7 +134,7 @@ public class HttpFetcher {
             int n;
             while ((n = is.read(buf)) != -1) {
                 total += n;
-                if (total > MAX_RESPONSE_BYTES) {
+                if (total > maxBytes) {
                     return null;
                 }
                 bos.write(buf, 0, n);
