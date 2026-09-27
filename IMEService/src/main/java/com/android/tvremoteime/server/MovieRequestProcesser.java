@@ -300,10 +300,7 @@ public class MovieRequestProcesser implements RequestProcesser {
         if (TextUtils.isEmpty(wd)) {
             return error("缺少关键词 wd");
         }
-        try {
-            wd = wd.trim();
-        } catch (Exception ignored) {
-        }
+        final String keyword = wd.trim();
         List<Source> sources = getEnabledSources();
         if (sources.isEmpty()) {
             try {
@@ -319,7 +316,7 @@ public class MovieRequestProcesser implements RequestProcesser {
         Map<Future<JSONArray>, String> futureSource = new HashMap<>();
         for (int i = 0; i < n; i++) {
             final Source s = sources.get(i);
-            Future<JSONArray> f = pool.submit(() -> querySource(s, wd));
+            Future<JSONArray> f = pool.submit(() -> querySource(s, keyword));
             futures.add(f);
             futureSource.put(f, s.key);
         }
@@ -770,21 +767,30 @@ public class MovieRequestProcesser implements RequestProcesser {
         if (TextUtils.isEmpty(api)) {
             return;
         }
+        String status;
+        String probeError = "";
         try {
             String body = HttpFetcher.fetch(api, null, 5000, 5000);
             if (!TextUtils.isEmpty(body)) {
                 String cur = s.optString("status", "");
                 if (TextUtils.isEmpty(cur) || "pending".equals(cur)) {
-                    s.put("status", "recommended");
+                    status = "recommended";
+                } else {
+                    status = cur;
                 }
-                s.put("lastProbeError", "");
             } else {
-                s.put("status", "caution");
-                s.put("lastProbeError", "空响应");
+                status = "caution";
+                probeError = "空响应";
             }
         } catch (Exception e) {
-            s.put("status", "caution");
-            s.put("lastProbeError", e.getMessage() != null ? e.getMessage() : "探测失败");
+            status = "caution";
+            probeError = e.getMessage() != null ? e.getMessage() : "探测失败";
+        }
+        try {
+            s.put("status", status);
+            s.put("lastProbeError", probeError);
+        } catch (JSONException ignored) {
+            // 状态字段写不进去也不影响整体
         }
     }
 
