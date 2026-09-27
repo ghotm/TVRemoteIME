@@ -209,11 +209,15 @@ public class LiveRequestProcesser implements RequestProcesser {
                 }
             } catch (Exception e) {
                 JSONObject item = new JSONObject();
-                item.put("name", "");
-                item.put("configName", configName);
-                item.put("url", "");
-                item.put("error", shorten(e.getMessage()));
-                list.put(item);
+                try {
+                    item.put("name", "");
+                    item.put("configName", configName);
+                    item.put("url", "");
+                    item.put("error", shorten(e.getMessage()));
+                    list.put(item);
+                } catch (JSONException je) {
+                    Log.w(TAG, "构造失败源条目出错: " + configName, je);
+                }
             }
         }
         saveSourcesCache(list, System.currentTimeMillis());
