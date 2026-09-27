@@ -39,18 +39,14 @@ public class LiveListConverter {
         }
     }
 
-    /** 合并时的单个源输入。 */
-    public static final class Source {
-        public final String key;
+    /** 合并时的单个源输入（已解析为分组结构，不保留原始字节以控制内存）。 */
+    public static final class ParsedSource {
         public final String name;
-        public final byte[] data;
-        public final String charset;
+        public final List<Group> groups;
 
-        public Source(String key, String name, byte[] data, String charset) {
-            this.key = key;
+        public ParsedSource(String name, List<Group> groups) {
             this.name = name;
-            this.data = data;
-            this.charset = charset;
+            this.groups = groups;
         }
     }
 
@@ -145,11 +141,11 @@ public class LiveListConverter {
         return (trimmed.startsWith("#EXTM3U") || trimmed.startsWith("#EXTINF")) ? "m3u" : "txt";
     }
 
-    /** 合并多个源为一个列表：按源分区（分组名 = `源名 | 原始分组`），同名源加 (2)/(3) 保证唯一。 */
-    public static Result merge(List<Source> inputs) {
+    /** 合并多个已解析源为一个列表：按源分区（分组名 = `源名 | 原始分组`），同名源加 (2)/(3) 保证唯一。 */
+    public static Result mergeSources(List<ParsedSource> inputs) {
         List<String> used = new ArrayList<>();
         List<Group> out = new ArrayList<>();
-        for (Source src : inputs) {
+        for (ParsedSource src : inputs) {
             String base = clean(src.name);
             if (base.isEmpty()) {
                 base = "源";
@@ -161,13 +157,7 @@ public class LiveListConverter {
                 n++;
             }
             used.add(disp);
-            List<Group> groups;
-            try {
-                groups = parse(src.data, src.charset);
-            } catch (Exception e) {
-                continue;
-            }
-            for (Group g : groups) {
+            for (Group g : src.groups) {
                 Group ng = new Group(disp + " | " + clean(g.name));
                 ng.channels.addAll(g.channels);
                 out.add(ng);

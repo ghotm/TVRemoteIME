@@ -157,7 +157,10 @@ public class LiveRequestProcesser implements RequestProcesser {
     // ------------------------------------------------------------ 源清单
 
     private String handleSources(boolean force) throws JSONException {
-        JSONObject cache = loadSourcesCache();
+        JSONObject cache;
+        synchronized (liveSourcesLock) {
+            cache = loadSourcesCache();
+        }
         JSONArray list = cache != null ? cache.optJSONArray("list") : null;
         boolean cacheEmpty = list == null || list.length() == 0;
         if (force || cacheEmpty) {
@@ -504,7 +507,39 @@ public class LiveRequestProcesser implements RequestProcesser {
         return null;
     }
 
-    /** 添加自定义源：校验 → 查重 → 受限探测 → 保存（探测超限/超时仍保存并标注未完整验证）。 */
+    /** 按归一化 url 在缓存中查找（用于 addSource 查重）。 */
+    private static JSONObject findByUrl(JSONObject cache, String napi) {
+        if (cache == null) {
+            return null;
+        }
+        JSONArray list = cache.optJSONArray("list");
+        if (list == null) {
+            return null;
+        }
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject it = list.optJSONObject(i);
+            if (it != null && napi.equals(normalizeUrl(it.optString("url", "")))) {
+                return it;
+            }
+        }
+        return null;
+    }
+
+    /** 统计分组结构中的 url 总数（用于判断列表是否解析出频道）。 */
+    private static int countSources(List<LiveListConverter.Group> groups) {
+        int n = 0;
+        if (groups == null) {
+            return 0;
+        }
+        for (LiveListConverter.Group g : groups) {
+            for (LiveListConverter.ChannelEntry c : g.channels) {
+                n += c.urls.size();
+            }
+        }
+        return n;
+    }
+
+    /** 添加自定义源：校验 → 锁内查重 → 锁外受限探测 → 锁内二次查重后保存（探测超限/超时仍保存并标注未完整验证）。 */
     private String handleAddSource(String name, String url) throws JSONException {
         if (TextUtils.isEmpty(name)) {
             return errorJson("请输入源名称");
@@ -517,36 +552,41 @@ public class LiveRequestProcesser implements RequestProcesser {
             return errorJson("仅支持 http/https 地址");
         }
         String napi = normalizeUrl(url);
+        // ① 锁内查重（基于最新缓存）
         synchronized (liveSourcesLock) {
+            if (findByUrl(loadSourcesCache(), napi) != null) {
+                return errorJson("该源已存在");
+            }
+        }
+        // ② 锁外受限探测：只下载前 2MB 判断可解析性，避免大列表与网络 I/O 长时间持锁
+        String warn = "";
+        try {
+            HttpFetcher.Fetched f = HttpFetcher.fetchBytes(url, null,
+                    ADD_SOURCE_PROBE_CONNECT_MS, ADD_SOURCE_PROBE_READ_MS, ADD_SOURCE_PROBE_MAX_BYTES);
+            if (countSources(LiveListConverter.parse(f.data, f.charset)) == 0) {
+                return errorJson("未能从该地址解析到任何直播源");
+            }
+        } catch (Exception e) {
+            String m = e.getMessage() == null ? "" : e.getMessage();
+            if (m.contains("Blocked non-public address")) {
+                return errorJson("被安全策略拒绝：不支持内网/私有地址");
+            }
+            if (m.contains("Unsupported protocol")) {
+                return errorJson("仅支持 http/https 协议");
+            }
+            if (m.contains("Response too large") || m.contains("timed out") || m.contains("timeout")) {
+                warn = VERIFY_WARNING;
+            } else {
+                return errorJson("下载失败：" + shorten(m));
+            }
+        }
+        // ③ 锁内二次查重（防 TOCTOU）后写入
+        synchronized (liveSourcesLock) {
+            if (findByUrl(loadSourcesCache(), napi) != null) {
+                return errorJson("该源已存在");
+            }
             JSONObject cache = loadSourcesCache();
             JSONArray list = cache != null ? cache.optJSONArray("list") : new JSONArray();
-            for (int i = 0; i < list.length(); i++) {
-                JSONObject it = list.optJSONObject(i);
-                if (it != null && napi.equals(normalizeUrl(it.optString("url", "")))) {
-                    return errorJson("该源已存在：" + it.optString("name", ""));
-                }
-            }
-            // 受限探测：只下载前 2MB 判断可解析性，避免大列表阻塞请求线程
-            String warn = "";
-            try {
-                HttpFetcher.Fetched f = HttpFetcher.fetchBytes(url, null,
-                        ADD_SOURCE_PROBE_CONNECT_MS, ADD_SOURCE_PROBE_READ_MS, ADD_SOURCE_PROBE_MAX_BYTES);
-                LiveListConverter.Result r = LiveListConverter.convert(f.data, f.charset);
-                if (r.sourceCount == 0) {
-                    return errorJson("未能从该地址解析到任何直播源");
-                }
-            } catch (Exception e) {
-                String m = e.getMessage() == null ? "" : e.getMessage();
-                if (m.contains("Response too large") || m.contains("timed out") || m.contains("timeout")) {
-                    warn = VERIFY_WARNING;
-                } else if (m.contains("Blocked non-public address")) {
-                    return errorJson("被安全策略拒绝：不支持内网/私有地址");
-                } else if (m.contains("Unsupported protocol")) {
-                    return errorJson("仅支持 http/https 协议");
-                } else {
-                    return errorJson("下载失败：" + shorten(m));
-                }
-            }
             JSONObject item = new JSONObject();
             item.put("key", sourceKey(url, "c"));
             item.put("name", name);
@@ -558,7 +598,7 @@ public class LiveRequestProcesser implements RequestProcesser {
             saveSourcesCache(list, cache != null ? cache.optLong("lastUpdated", 0) : 0);
             JSONObject o = new JSONObject();
             o.put("code", "ok");
-            o.put("msg", warn.isEmpty() ? "已添加自定义源" : "已添加自定义源（未完整验证）");
+            o.put("msg", warn.isEmpty() ? "已添加自定义源" : "已添加自定义源（未完整验证，可尝试应用）");
             if (!warn.isEmpty()) {
                 o.put("saved", true);
                 o.put("warning", warn);
@@ -615,7 +655,7 @@ public class LiveRequestProcesser implements RequestProcesser {
             return errorJson("没有匹配到所选源");
         }
         JSONArray failed = new JSONArray();
-        List<LiveListConverter.Source> inputs = new ArrayList<>();
+        List<LiveListConverter.ParsedSource> sources = new ArrayList<>();
         for (JSONObject it : picked) {
             String name = it.optString("name", "源");
             String url = it.optString("url", "");
@@ -626,20 +666,21 @@ public class LiveRequestProcesser implements RequestProcesser {
             try {
                 HttpFetcher.Fetched f = HttpFetcher.fetchBytes(url, null,
                         APPLY_CONNECT_TIMEOUT_MS, APPLY_READ_TIMEOUT_MS, LIVE_LIST_MAX_BYTES);
-                LiveListConverter.Result r = LiveListConverter.convert(f.data, f.charset);
-                if (r.sourceCount == 0) {
+                List<LiveListConverter.Group> groups = LiveListConverter.parse(f.data, f.charset);
+                if (countSources(groups) == 0) {
                     failed.put(name + ": 未解析到任何频道");
                     continue;
                 }
-                inputs.add(new LiveListConverter.Source(it.optString("key", ""), name, f.data, f.charset));
+                // 只保留已解析结构，不保留原始 byte[]，控制多源大列表的内存峰值
+                sources.add(new LiveListConverter.ParsedSource(name, groups));
             } catch (Exception e) {
                 failed.put(name + ": " + shorten(e.getMessage()));
             }
         }
-        if (inputs.isEmpty()) {
+        if (sources.isEmpty()) {
             return errorJson("所选源全部失败，未能合并");
         }
-        LiveListConverter.Result merged = LiveListConverter.merge(inputs);
+        LiveListConverter.Result merged = LiveListConverter.mergeSources(sources);
         synchronized (RemoteServerFileManager.tvFileLock) {
             try {
                 String backup = backupCurrent();
@@ -647,7 +688,7 @@ public class LiveRequestProcesser implements RequestProcesser {
                 cleanupBackups();
                 JSONObject o = new JSONObject();
                 o.put("code", "ok");
-                o.put("msg", "已合并 " + inputs.size() + " 个源");
+                o.put("msg", "已合并 " + sources.size() + " 个源");
                 o.put("channelCount", merged.channelCount);
                 o.put("sourceCount", merged.sourceCount);
                 o.put("backup", backup == null ? "" : backup);

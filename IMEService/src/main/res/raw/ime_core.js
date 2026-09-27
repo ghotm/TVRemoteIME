@@ -1199,6 +1199,10 @@ function liveLoadSources(force){
 		}
 	}, 'json').fail(function(){ liveUpdateStatus('获取失败，请重试', true); });
 }
+function esc(s){
+	if(s === null || s === undefined){ return ''; }
+	return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 function renderLiveSources(list){
 	var checked = {};
 	$('#liveSourceList input.live-source-check:checked').each(function(){ checked[$(this).attr('data-key')] = true; });
@@ -1207,17 +1211,20 @@ function renderLiveSources(list){
 		html.push('<div class="live-source-empty">暂无可用直播源，点击「刷新」重试</div>');
 	}else{
 		for(var i=0;i<list.length;i++){
-			var it = list[i];
-			var disabled = !!it.error;
-			html.push('<div class="live-source-item' + (disabled ? ' disabled' : '') + '">');
-			html.push('<label class="live-source-check-wrap"><input type="checkbox" class="live-source-check" data-key="' + (it.key || '') + '"' + (checked[it.key] ? ' checked' : '') + (disabled ? ' disabled' : '') + '></label>');
-			html.push('<div class="live-source-name">' + (it.name || '（不可用）') + '</div>');
-			html.push('<div class="live-source-from">来源：' + (it.configName || '-') + (it.error ? ('｜' + it.error) : '') + '</div>');
-			if(!disabled){
-				html.push('<button type="button" class="btn-primary btn-small live-source-apply" data-url="' + it.url + '" data-name="' + (it.name || '') + '">应用</button>');
+			var it = list[i] || {};
+			var hasUrl = !!it.url;
+			// 只有「没有地址」的源才是硬不可用；「未完整验证」的源仍可应用/合并（仅黄标提示）
+			var cls = hasUrl ? (it.error ? ' warn' : '') : ' disabled';
+			var label = it.name ? it.name : (hasUrl ? '未命名源' : '（不可用）');
+			html.push('<div class="live-source-item' + cls + '">');
+			html.push('<label class="live-source-check-wrap"><input type="checkbox" class="live-source-check" data-key="' + esc(it.key) + '"' + (checked[it.key] ? ' checked' : '') + (hasUrl ? '' : ' disabled') + '></label>');
+			html.push('<div class="live-source-name">' + esc(label) + '</div>');
+			html.push('<div class="live-source-from">来源：' + esc(it.configName || '-') + (it.error ? ('｜' + esc(it.error)) : '') + '</div>');
+			if(hasUrl){
+				html.push('<button type="button" class="btn-primary btn-small live-source-apply" data-url="' + esc(it.url) + '" data-name="' + esc(it.name || '') + '">应用</button>');
 			}
 			if(it.custom){
-				html.push('<button type="button" class="btn-secondary btn-small live-source-del" data-key="' + (it.key || '') + '">删除</button>');
+				html.push('<button type="button" class="btn-secondary btn-small live-source-del" data-key="' + esc(it.key) + '">删除</button>');
 			}
 			html.push('</div>');
 		}
@@ -1324,10 +1331,20 @@ function liveMerge(){
 	liveUpdateStatus('正在合并并应用…', false);
 	$.post('/live/merge', {keys: keys.join(',')}, function(data){
 		if(data && data.code === 'ok'){
-			var extra = (data.failed && data.failed.length) ? ('（' + data.failed.length + ' 个源失败）') : '';
-			alert('已合并 ' + (data.channelCount||0) + ' 个频道 / ' + (data.sourceCount||0) + ' 个源' + extra);
+			// 与 liveApply 一致：先收起编辑器，避免 loadTVList 覆盖用户未保存的编辑
+			if(!$('.tv-editor').hasClass('hidden')){
+				$('.tv-editor').addClass('hidden');
+				$('.tv-items').removeClass('hidden');
+			}
+			var detail = '已合并 ' + (data.channelCount||0) + ' 个频道，' + (data.sourceCount||0) + ' 个源';
+			if(data.failed && data.failed.length){
+				var shown = [];
+				for(var fi=0;fi<Math.min(data.failed.length,3);fi++){ shown.push(data.failed[fi]); }
+				detail += '。失败 ' + data.failed.length + ' 个源：' + shown.join('；') + (data.failed.length>3?'…':'');
+			}
+			alert(detail);
 			loadTVList();
-			liveUpdateStatus('已合并：' + (data.channelCount||0) + ' 频道 / ' + (data.sourceCount||0) + ' 源' + extra, false);
+			liveUpdateStatus('已合并：' + (data.channelCount||0) + ' 频道 / ' + (data.sourceCount||0) + ' 源' + (data.failed&&data.failed.length?('（' + data.failed.length + ' 个源失败）'):''), false);
 		}else{
 			alert('合并失败：' + (data && data.msg ? data.msg : '未知错误'));
 			liveUpdateStatus('合并失败', true);

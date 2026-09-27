@@ -1822,3 +1822,7 @@ body {
 .live-source-check-wrap { display: inline-flex; align-items: center; }
 .live-source-check-wrap input { width: 18px; height: 18px; cursor: pointer; accent-color: #2d7dd2; }
 .live-source-del { margin-left: 2px; }
+
+/* 直播源「未完整验证」警告样式（有地址但探测受限/超时，仍可应用/合并） */
+.live-source-item.warn { border-color: #faad14; background: #fffbe6; }
+.live-source-item.warn .live-source-from { color: #ad6800; }
