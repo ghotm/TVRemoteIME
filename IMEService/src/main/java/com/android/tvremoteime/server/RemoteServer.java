@@ -49,6 +49,7 @@ public class RemoteServer extends NanoHTTPD
     private RemoteServerFileManager.Factory fileManagerFactory = new RemoteServerFileManager.Factory();
     private ArrayList<RequestProcesser> getRequestProcessers = new ArrayList<>();
     private ArrayList<RequestProcesser> postRequestProcessers = new ArrayList<>();
+    private MovieRequestProcesser movieRequestProcesser = null;
 
     public void setDataReceiver(DataReceiver receiver){
         mDataReceiver = receiver;
@@ -63,6 +64,7 @@ public class RemoteServer extends NanoHTTPD
     public RemoteServer(int port, Context context) {
         super(port);
         mContext = context;
+        movieRequestProcesser = new MovieRequestProcesser(context);
         this.addGetRequestProcessers();
         this.addPostRequestProcessers();
     }
@@ -143,6 +145,7 @@ public class RemoteServer extends NanoHTTPD
         this.getRequestProcessers.add(new TVRequestProcesser(this.mContext));
         this.getRequestProcessers.add(new MouseRequestProcesser(this.mContext, this));
         this.getRequestProcessers.add(new OtherGetRequestProcesser(this.mContext));
+        this.getRequestProcessers.add(this.movieRequestProcesser);
     }
     private void addPostRequestProcessers(){
         this.postRequestProcessers.add(new InputRequestProcesser(this.mContext, this));
@@ -154,6 +157,7 @@ public class RemoteServer extends NanoHTTPD
         this.postRequestProcessers.add(new TVRequestProcesser(this.mContext));
         this.postRequestProcessers.add(new TorrentRequestProcesser(this.mContext));
         this.postRequestProcessers.add(new OtherPostRequestProcesser(this.mContext));
+        this.postRequestProcessers.add(this.movieRequestProcesser);
     }
 
 

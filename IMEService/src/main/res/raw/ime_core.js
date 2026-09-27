@@ -911,3 +911,165 @@ $(document).ready(function() {
 	checkAdbStatus();
 	setInterval(checkAdbStatus, 10000);
 });
+
+// ===================== 影视仓 =====================
+var movieCurrentDetail = null;
+
+function movieLoadSources() {
+	$.get("/movie/sources", function(data) {
+		if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
+		if (!data || data.list === undefined) { return; }
+		var lastUpdated = data.lastUpdated || 0;
+		$('#movieSourcesStatus').text(lastUpdated ? '上次更新：' + new Date(lastUpdated).toLocaleString() : '尚未更新');
+		var html = '';
+		$(data.list).each(function() {
+			var s = this;
+			var cls = s.enable ? '' : ' disabled';
+			var statusCls = 'good';
+			if (s.status === 'caution') { statusCls = 'warn'; }
+			else if (s.status === 'removed' || s.status === 'temporarily_unavailable') { statusCls = 'bad'; }
+			html += '<div class="movie-source-item' + cls + '">'
+				+ '<label class="checkbox-label movie-source-toggle-wrap"><input type="checkbox" class="movie-source-toggle" data-key="' + s.key + '"' + (s.enable ? ' checked' : '') + '><span>启用</span></label>'
+				+ '<span class="movie-source-name">' + s.name + '</span>'
+				+ '<span class="movie-source-status ' + statusCls + '">' + (s.status || '') + '</span>'
+				+ '<span class="movie-source-api" title="' + s.api + '">' + s.api + '</span>'
+				+ '</div>';
+		});
+		$('#movieSourceList').html(html || '<div class="movie-empty">暂无源，请点击「检查更新源」</div>');
+		$('.movie-source-toggle').off('click').on('click', function() {
+			var key = $(this).attr('data-key');
+			$.post('/movie/toggleSource', { key: key, enable: this.checked }, function() {
+				movieLoadSources();
+			});
+		});
+	}).fail(function() {
+		$('#movieSourcesStatus').text('源列表加载失败');
+	});
+}
+
+function movieSearch() {
+	var wd = ($('#movieSearchInput').val() || '').trim();
+	if (!wd) { return; }
+	$('#movieSearchStatus').text('搜索中...');
+	$('#movieResults').removeClass('hidden');
+	$('#movieResultList').html('<div class="movie-empty">搜索中...</div>');
+	$.get('/movie/search', { wd: wd }, function(data) {
+		if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = null; } }
+		if (!data || data.code !== 0) { $('#movieSearchStatus').text('搜索失败'); return; }
+		$('#movieSearchStatus').text('共 ' + data.total + ' 个结果');
+		if (!data.list || !data.list.length) {
+			$('#movieResultList').html('<div class="movie-empty">未找到相关影视</div>');
+			return;
+		}
+		var html = '';
+		$(data.list).each(function() {
+			var v = this;
+			var pic = v.pic || '';
+			html += '<div class="movie-card" data-source="' + v.source + '" data-id="' + v.id + '">'
+				+ (pic ? '<div class="movie-card-pic"><img loading="lazy" src="' + pic + '" alt="海报" onerror="this.style.display=\'none\'"></div>' : '')
+				+ '<div class="movie-card-body">'
+				+ '<div class="movie-card-title">' + (v.name || '') + (v.year ? ' <span class="movie-card-year">' + v.year + '</span>' : '') + '</div>'
+				+ (v.sub ? '<div class="movie-card-sub">' + v.sub + '</div>' : '')
+				+ '<div class="movie-card-meta">' + (v.sourceName || '') + (v.actor ? ' · 主演：' + v.actor : '') + '</div>'
+				+ (v.blurb ? '<div class="movie-card-blurb">' + v.blurb + '</div>' : '')
+				+ '</div></div>';
+		});
+		$('#movieResultList').html(html);
+		$('.movie-card').on('click', function() {
+			movieDetail($(this).attr('data-source'), $(this).attr('data-id'));
+		});
+	}).fail(function() {
+		$('#movieSearchStatus').text('搜索请求失败');
+	});
+}
+
+function movieDetail(source, id) {
+	$('#movieSearchStatus').text('加载详情...');
+	$('#movieDetail').removeClass('hidden').html('<div class="movie-empty">加载中...</div>');
+	$.get('/movie/detail', { source: source, id: id }, function(data) {
+		if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = null; } }
+		if (!data || data.code !== 0 || !data.detail) {
+			$('#movieDetail').html('<div class="movie-empty">详情加载失败</div>');
+			$('#movieSearchStatus').text('');
+			return;
+		}
+		$('#movieSearchStatus').text('');
+		movieCurrentDetail = data.detail;
+		var d = data.detail;
+		var html = '<div class="movie-detail-head">'
+			+ (d.pic ? '<div class="movie-detail-pic"><img src="' + d.pic + '" alt="海报"></div>' : '')
+			+ '<div class="movie-detail-meta">'
+			+ '<div class="movie-detail-title">' + (d.name || '') + '</div>'
+			+ '<div class="movie-detail-line">' + (d.year ? d.year + ' · ' : '') + (d.sourceName || '') + '</div>'
+			+ (d.director ? '<div class="movie-detail-line">导演：' + d.director + '</div>' : '')
+			+ (d.actor ? '<div class="movie-detail-line">主演：' + d.actor + '</div>' : '')
+			+ (d.blurb ? '<div class="movie-detail-blurb">' + d.blurb + '</div>' : '')
+			+ '</div></div>'
+			+ '<div class="movie-detail-actions"><button type="button" class="btn-secondary" id="movieBackBtn">返回列表</button></div>';
+		var lines = d.lines || [];
+		$(lines).each(function() {
+			var line = this;
+			html += '<div class="movie-line"><div class="movie-line-flag">' + (line.flag || '') + '</div><div class="movie-line-eps">';
+			$(line.eps || []).each(function() {
+				var ep = this;
+				html += '<button type="button" class="movie-ep" data-url="' + ep.url + '" data-name="' + (d.name || '') + ' ' + (ep.name || '') + '">' + (ep.name || '') + '</button>';
+			});
+			html += '</div></div>';
+		});
+		html += '<div class="movie-detail-actions"><button type="button" class="btn-primary" id="moviePlaySystemBtn">用系统播放器播放</button></div>';
+		$('#movieDetail').html(html);
+		$('#movieBackBtn').on('click', function() {
+			$('#movieDetail').addClass('hidden').html('');
+			movieCurrentDetail = null;
+		});
+		$('.movie-ep').on('click', function() {
+			var url = $(this).attr('data-url');
+			var title = $(this).attr('data-name');
+			if (!url) { return; }
+			$.post('/play', { playUrl: url, forceVod: true, title: title }, function() {});
+		});
+		$('#moviePlaySystemBtn').on('click', function() {
+			if (!movieCurrentDetail) { return; }
+			var lines0 = movieCurrentDetail.lines || [];
+			var first = null;
+			if (lines0.length && (lines0[0].eps || []).length) { first = lines0[0].eps[0]; }
+			if (!first) { alert('无播放地址'); return; }
+			$.post('/play', { playUrl: first.url, forceVod: true, useSystem: true, title: (movieCurrentDetail.name || '') + ' ' + (first.name || '') }, function() {});
+		});
+	}).fail(function() {
+		$('#movieDetail').html('<div class="movie-empty">详情请求失败</div>');
+	});
+}
+
+function movieRefreshPlayState() {
+	$.get('/movie/playState', function(data) {
+		if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
+		if (!data) { return; }
+		if (data.isPlaying) {
+			$('#moviePlayState').text('播放中：' + (data.lastPlayUrl || ''));
+		} else {
+			$('#moviePlayState').text('播放：未播放');
+		}
+	}).fail(function() {});
+}
+
+$('#movieSearchBtn').on('click', movieSearch);
+$('#movieSearchInput').on('keydown', function(e) {
+	if (e.keyCode === 13) { movieSearch(); }
+});
+$('#movieUpdateBtn').on('click', function() {
+	$('#movieSourcesStatus').text('正在检查更新...');
+	$.post('/movie/updateSources', null, function() {
+		setTimeout(movieLoadSources, 3000);
+		setTimeout(function() { $('#movieSourcesStatus').text('更新完成'); }, 6000);
+	}).fail(function() {
+		$('#movieSourcesStatus').text('更新请求失败');
+	});
+});
+// 切到影视仓 Tab 时加载源列表与播放状态
+$(document).on('click', 'button.tab[data-tab="movie"]', function() {
+	movieLoadSources();
+	movieRefreshPlayState();
+});
+// 每 5 秒刷新播放状态
+setInterval(movieRefreshPlayState, 5000);

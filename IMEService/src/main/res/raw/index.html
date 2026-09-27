@@ -45,6 +45,10 @@
 			  <span class="tab-icon">🎬</span>
 			  <span class="tab-text">视频直播</span>
 		  </button>
+		  <button class="tab" data-tab="movie" aria-label="影视仓">
+			  <span class="tab-icon">🎥</span>
+			  <span class="tab-text">影视仓</span>
+		  </button>
 		</nav>
 
 		<!-- Tab Content: Controls -->
@@ -245,6 +249,37 @@
 						<button type="button" class="btn-primary" id="btnTVEdit">修改</button>
 						<button type="button" class="btn-secondary" id="btnTVCancel">取消</button>
 					</div>
+				</div>
+			</section>
+		</div>
+
+		<!-- Tab Content: 影视仓 -->
+		<div class="tab-content hidden" data-tab="movie">
+			<section class="movie-panel">
+				<div class="movie-toolbar">
+					<div class="input-row">
+						<input type="text" id="movieSearchInput" placeholder="搜索影视，如：庆余年" aria-label="影视搜索" class="movie-search-input">
+						<button type="button" class="btn-primary" id="movieSearchBtn">搜索</button>
+						<button type="button" class="btn-secondary" id="movieUpdateBtn">检查更新源</button>
+					</div>
+					<div class="movie-status-row">
+						<span id="movieSearchStatus"></span>
+						<span id="moviePlayState">播放：--</span>
+					</div>
+				</div>
+
+				<div class="movie-results hidden" id="movieResults">
+					<div class="movie-result-list" id="movieResultList"></div>
+				</div>
+
+				<div class="movie-detail hidden" id="movieDetail"></div>
+
+				<div class="movie-sources">
+					<div class="tv-header">
+						<span class="tv-title">源管理：</span>
+						<span class="tv-hint" id="movieSourcesStatus"></span>
+					</div>
+					<div class="movie-source-list" id="movieSourceList"></div>
 				</div>
 			</section>
 		</div>

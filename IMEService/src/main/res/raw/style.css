@@ -1419,3 +1419,236 @@ body {
 	overflow: hidden;
 	z-index: -1;
 }
+
+/* ============ 影视仓 ============ */
+.movie-toolbar {
+	margin-bottom: 10px;
+}
+.movie-toolbar .input-row {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	margin-bottom: 8px;
+}
+.movie-search-input {
+	flex: 1;
+	min-width: 160px;
+}
+.movie-status-row {
+	display: flex;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 6px;
+	font-size: var(--font-size-sm, 12px);
+	color: var(--color-text-secondary, #888);
+	margin-bottom: 6px;
+	word-break: break-all;
+}
+.movie-results {
+	margin-bottom: 14px;
+}
+.movie-result-list {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+	gap: 10px;
+}
+.movie-card {
+	background: #fff;
+	border-radius: 8px;
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+	cursor: pointer;
+	overflow: hidden;
+	transition: box-shadow 0.2s;
+}
+.movie-card:hover {
+	box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+.movie-card-pic {
+	width: 100%;
+	height: 140px;
+	overflow: hidden;
+	background: #eee;
+}
+.movie-card-pic img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+.movie-card-body {
+	padding: 8px 10px;
+}
+.movie-card-title {
+	font-weight: 600;
+	color: #222;
+	margin-bottom: 2px;
+}
+.movie-card-year {
+	font-weight: 400;
+	color: #999;
+	font-size: 12px;
+	margin-left: 4px;
+}
+.movie-card-sub {
+	color: #666;
+	font-size: 12px;
+	margin-top: 2px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.movie-card-meta {
+	color: #999;
+	font-size: 12px;
+	margin-top: 2px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.movie-card-blurb {
+	color: #888;
+	font-size: 12px;
+	margin-top: 4px;
+	max-height: 2.4em;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.movie-empty {
+	color: #999;
+	padding: 18px 0;
+	text-align: center;
+}
+.movie-detail {
+	margin-bottom: 14px;
+	background: #fff;
+	border-radius: 8px;
+	padding: 12px;
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+.movie-detail-head {
+	display: flex;
+	gap: 12px;
+	margin-bottom: 10px;
+}
+.movie-detail-pic {
+	width: 110px;
+	height: 150px;
+	flex-shrink: 0;
+	overflow: hidden;
+	border-radius: 6px;
+	background: #eee;
+}
+.movie-detail-pic img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+.movie-detail-meta {
+	flex: 1;
+	min-width: 0;
+}
+.movie-detail-title {
+	font-size: 18px;
+	font-weight: 700;
+	color: #222;
+	margin-bottom: 4px;
+}
+.movie-detail-line {
+	color: #555;
+	font-size: 13px;
+	margin-top: 2px;
+	word-break: break-all;
+}
+.movie-detail-blurb {
+	color: #777;
+	font-size: 13px;
+	margin-top: 6px;
+	max-height: 5em;
+	overflow: hidden;
+}
+.movie-detail-actions {
+	margin: 8px 0;
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.movie-line {
+	margin-bottom: 10px;
+}
+.movie-line-flag {
+	font-weight: 600;
+	color: #0061A4;
+	margin-bottom: 6px;
+}
+.movie-line-eps {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+.movie-ep {
+	padding: 4px 10px;
+	border: 1px solid #d0d7de;
+	border-radius: 4px;
+	background: #f6f8fa;
+	color: #333;
+	font-size: 12px;
+	cursor: pointer;
+}
+.movie-ep:hover {
+	background: #0061A4;
+	color: #fff;
+}
+.movie-sources {
+	margin-top: 6px;
+}
+.movie-source-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.movie-source-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	background: #fff;
+	border-radius: 6px;
+	padding: 6px 10px;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+	flex-wrap: wrap;
+}
+.movie-source-item.disabled {
+	opacity: 0.5;
+}
+.movie-source-toggle-wrap {
+	margin: 0;
+}
+.movie-source-name {
+	font-weight: 600;
+	color: #333;
+	white-space: nowrap;
+}
+.movie-source-status {
+	font-size: 11px;
+	padding: 1px 6px;
+	border-radius: 3px;
+}
+.movie-source-status.good {
+	background: #d1fadf;
+	color: #166534;
+}
+.movie-source-status.warn {
+	background: #fef3c7;
+	color: #92400e;
+}
+.movie-source-status.bad {
+	background: #fee2e2;
+	color: #991b1b;
+}
+.movie-source-api {
+	flex: 1;
+	min-width: 0;
+	color: #999;
+	font-size: 12px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
