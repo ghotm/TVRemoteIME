@@ -56,21 +56,25 @@ public class TVRequestProcesser implements RequestProcesser {
         if(session.getMethod() == NanoHTTPD.Method.POST){
             //edit
             String text = params.get("text");
-            try {
-                OutputStreamWriter out = new OutputStreamWriter(new FileOutputStream(tvFile), "utf-8");
-                out.write(text == null ? "" : text);
-                out.close();
-                return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.OK, "ok");
-            }catch (IOException e) {
-                Log.e(IMEService.TAG, "POST /tv.txt", e);
+            synchronized (RemoteServerFileManager.tvFileLock) {
+                try {
+                    OutputStreamWriter out = new OutputStreamWriter(new FileOutputStream(tvFile), "utf-8");
+                    out.write(text == null ? "" : text);
+                    out.close();
+                    return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.OK, "ok");
+                }catch (IOException e) {
+                    Log.e(IMEService.TAG, "POST /tv.txt", e);
+                }
             }
             return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.OK, "fail");
         }else{
-            try {
-                InputStream inputStream = tvFile.exists() ? new FileInputStream(tvFile) : context.getResources().openRawResource(R.raw.tv);
-                return RemoteServer.newFixedLengthResponse(NanoHTTPD.Response.Status.OK, "text/plain; charset=utf-8", inputStream, (long) inputStream.available());
-            } catch (IOException ioex) {
-                return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.INTERNAL_ERROR, "SERVER INTERNAL ERROR: IOException: " + ioex.getMessage());
+            synchronized (RemoteServerFileManager.tvFileLock) {
+                try {
+                    InputStream inputStream = tvFile.exists() ? new FileInputStream(tvFile) : context.getResources().openRawResource(R.raw.tv);
+                    return RemoteServer.newFixedLengthResponse(NanoHTTPD.Response.Status.OK, "text/plain; charset=utf-8", inputStream, (long) inputStream.available());
+                } catch (IOException ioex) {
+                    return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.INTERNAL_ERROR, "SERVER INTERNAL ERROR: IOException: " + ioex.getMessage());
+                }
             }
         }
     }

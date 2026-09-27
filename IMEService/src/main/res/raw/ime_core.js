@@ -1170,3 +1170,103 @@ $(document).on('click', 'button.tab[data-tab="movie"]', function() {
 });
 // 每 5 秒刷新播放状态
 setInterval(movieRefreshPlayState, 5000);
+// ===== 直播源更新（从影视仓 tvbox 配置）=====
+function liveUpdateStatus(msg, isError){
+	$('#liveSourceStatus').text(msg).toggleClass('error', !!isError);
+}
+function liveLoadSources(force){
+	liveUpdateStatus(force ? '正在刷新配置…' : '正在获取直播源…', false);
+	$.get('/live/sources' + (force ? '?refresh=1' : ''), function(data){
+		if(!data || !data.list){ liveUpdateStatus('获取失败：响应异常', true); return; }
+		if(data.refreshing && data.list.length === 0){
+			liveUpdateStatus('正在获取配置，请稍候…', false);
+			setTimeout(function(){ liveLoadSources(false); }, 3e3);
+			return;
+		}
+		renderLiveSources(data.list);
+		if(data.refreshing){
+			liveUpdateStatus('已列出 ' + data.list.length + ' 个源（正在后台刷新…）', false);
+		}else{
+			liveUpdateStatus('共 ' + data.list.length + ' 个直播源', false);
+		}
+	}, 'json').fail(function(){ liveUpdateStatus('获取失败，请重试', true); });
+}
+function renderLiveSources(list){
+	var html = [];
+	if(!list || list.length === 0){
+		html.push('<div class="live-source-empty">暂无可用直播源，点击「刷新」重试</div>');
+	}else{
+		for(var i=0;i<list.length;i++){
+			var it = list[i];
+			html.push('<div class="live-source-item' + (it.error ? ' disabled' : '') + '">');
+			html.push('<div class="live-source-name">' + (it.name || '（不可用）') + '</div>');
+			html.push('<div class="live-source-from">来源：' + (it.configName || '-') + (it.error ? ('｜' + it.error) : '') + '</div>');
+			if(!it.error){
+				html.push('<button type="button" class="btn-primary btn-small live-source-apply" data-url="' + it.url + '" data-name="' + (it.name || '') + '">应用</button>');
+			}
+			html.push('</div>');
+		}
+	}
+	$('#liveSourceList').html(html.join(''));
+	$('#liveBackupList').addClass('hidden').empty();
+}
+function liveApply(url, name){
+	if(!url) return;
+	if(!confirm('将用该直播源整体替换当前电视频道列表（原列表会自动备份），确定继续？')) return;
+	liveUpdateStatus('正在下载并更新…', false);
+	$.post('/live/apply', {url:url, name:name}, function(data){
+		if(data && data.code === 'ok'){
+			if(!$('.tv-editor').hasClass('hidden')){
+				$('.tv-editor').addClass('hidden');
+				$('.tv-items').removeClass('hidden');
+			}
+			alert('直播源已更新：' + data.channelCount + ' 个频道，' + data.sourceCount + ' 个源（格式 ' + data.format + '）。');
+			liveUpdateStatus('已更新：' + data.channelCount + ' 频道 / ' + data.sourceCount + ' 源', false);
+			loadTVList();
+		}else{
+			alert('更新失败：' + (data && data.msg ? data.msg : '未知错误'));
+			liveUpdateStatus('更新失败', true);
+		}
+	}, 'json').fail(function(){ alert('更新失败：请求出错'); liveUpdateStatus('更新失败', true); });
+}
+function liveRestore(){
+	$.get('/live/backups', function(data){
+		if(!data || !data.list || data.list.length === 0){ alert('暂无备份可还原'); return; }
+		var list = data.list;
+		var html = [];
+		for(var i=0;i<list.length;i++){
+			var t = new Date(list[i].time);
+			html.push('<div class="live-backup-item"><span>' + t.toLocaleString() + '（' + Math.round(list[i].size/1024) + 'KB）</span>');
+			html.push('<button type="button" class="btn-secondary btn-small live-backup-restore" data-file="' + list[i].file + '">还原</button></div>');
+		}
+		$('#liveBackupList').html(html.join('')).removeClass('hidden');
+		liveUpdateStatus('请选择要还原的备份', false);
+	}, 'json').fail(function(){ alert('获取备份列表失败'); });
+}
+function liveBackupRestore(file){
+	if(!file) return;
+	if(!confirm('确定还原到该备份？（当前列表会再次自动备份）')) return;
+	$.post('/live/restore', {file:file}, function(data){
+		if(data && data.code === 'ok'){
+			alert('已还原到备份。');
+			$('#liveBackupList').addClass('hidden').empty();
+			loadTVList();
+		}else{
+			alert('还原失败：' + (data && data.msg ? data.msg : '未知错误'));
+		}
+	}, 'json').fail(function(){ alert('还原失败：请求出错'); });
+}
+$('#btnLiveUpdate').on('click', function(){
+	var $panel = $('#liveSourcePanel');
+	if($panel.hasClass('hidden')){
+		$panel.removeClass('hidden');
+		liveLoadSources(false);
+	}else{
+		$panel.addClass('hidden');
+	}
+});
+$('#btnLiveRefresh').on('click', function(){ liveLoadSources(true); });
+$('#btnLiveRestore').on('click', function(){ liveRestore(); });
+$('#btnLivePanelClose').on('click', function(){ $('#liveSourcePanel').addClass('hidden'); });
+$(document).on('click', '.live-source-apply', function(){ liveApply($(this).attr('data-url'), $(this).attr('data-name')); });
+$(document).on('click', '.live-backup-restore', function(){ liveBackupRestore($(this).attr('data-file')); });

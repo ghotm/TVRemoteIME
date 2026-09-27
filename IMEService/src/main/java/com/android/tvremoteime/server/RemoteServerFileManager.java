@@ -22,6 +22,8 @@ import java.util.List;
 import fi.iki.elonen.*;
 
 public class RemoteServerFileManager implements NanoHTTPD.TempFileManager {
+    /** tv.txt 读写的共享锁（TVRequestProcesser 与 LiveRequestProcesser 共用，防止并发写坏）。 */
+    public static final Object tvFileLock = new Object();
     static File baseDir = new File(Environment.getExternalStorageDirectory(), "tvremoteime");
     private static File filesDir = new File(baseDir, "files");
     private static File tmpDataDir = new File(baseDir, "temp");

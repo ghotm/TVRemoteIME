@@ -240,8 +240,19 @@
 					<div class="tv-header">
 						<span class="tv-title">电视节目：</span>
 						<span class="tv-hint">需要更改直播源？<a href="javascript:void(0);" id="btnShowTVEdit" class="link-primary">点击这里</a></span>
+						<button type="button" class="btn-secondary" id="btnLiveUpdate">📡 从仓库更新</button>
 					</div>
 					<div class="tv-items"></div>
+					<div id="liveSourcePanel" class="live-source-panel hidden">
+						<div class="live-source-head">
+							<span id="liveSourceStatus" class="live-source-status">点击「刷新」获取直播源列表</span>
+							<button type="button" class="btn-secondary btn-small" id="btnLiveRefresh">刷新</button>
+							<button type="button" class="btn-secondary btn-small" id="btnLiveRestore">还原备份</button>
+							<button type="button" class="btn-secondary btn-small" id="btnLivePanelClose">收起</button>
+						</div>
+						<div id="liveSourceList" class="live-source-list"></div>
+						<div id="liveBackupList" class="live-backup-list hidden"></div>
+					</div>
 				</div>
 
 				<div class="tv-editor hidden">

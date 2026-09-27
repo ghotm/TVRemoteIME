@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.zip.GZIPInputStream;
 
 /**
- * 轻量级 HTTP 抓取工具（影视仓用）。
+ * 轻量级 HTTP 抓取工具（影视仓 / 直播源用）。
  *
  * 特性：
  * - 支持 http + https（不复用强制 Https 的 HTTPGet）；
@@ -47,6 +47,18 @@ public class HttpFetcher {
 
     public static String fetch(String urlString, Map<String, String> extraHeaders,
                                int connectTimeoutMs, int readTimeoutMs) throws IOException {
+        Fetched result = fetchBytes(urlString, extraHeaders, connectTimeoutMs, readTimeoutMs);
+        String cs = result.charset != null ? result.charset : "UTF-8";
+        return new String(result.data, Charset.forName(cs));
+    }
+
+    /**
+     * 抓取并返回原始字节 + 响应声明的字符集（未声明为 null）。
+     * 用于调用方需要自行判定编码（如 UTF-8 / GBK）的场景。
+     * 返回的字节已做 gzip 解压；每一跳重定向仍会做 SSRF 校验。
+     */
+    public static Fetched fetchBytes(String urlString, Map<String, String> extraHeaders,
+                                     int connectTimeoutMs, int readTimeoutMs) throws IOException {
         String current = normalizeIdn(urlString);
         // 第一跳 SSRF 校验
         checkPublicUrl(current);
@@ -83,6 +95,7 @@ public class HttpFetcher {
                 } catch (java.net.URISyntaxException e) {
                     throw new IOException("Invalid redirect location: " + location, e);
                 }
+                // 每一跳重新做 SSRF 校验，防止 302 跳转到内网/环回地址
                 checkPublicUrl(current);
                 continue;
             }
@@ -95,12 +108,11 @@ public class HttpFetcher {
                 if ("gzip".equalsIgnoreCase(conn.getContentEncoding())) {
                     is = new GZIPInputStream(is);
                 }
-                String charset = parseCharset(conn.getContentType());
                 byte[] bytes = readLimited(is);
                 if (bytes == null) {
                     throw new IOException("Response too large (>8MB) at " + current);
                 }
-                return new String(bytes, Charset.forName(charset));
+                return new Fetched(bytes, parseCharset(conn.getContentType()));
             } finally {
                 conn.disconnect();
             }
@@ -183,6 +195,7 @@ public class HttpFetcher {
         }
     }
 
+    /** 解析响应声明字符集；未声明或非法返回 null。 */
     private static String parseCharset(String contentType) {
         if (!TextUtils.isEmpty(contentType)) {
             String lower = contentType.toLowerCase();
@@ -202,6 +215,17 @@ public class HttpFetcher {
                 }
             }
         }
-        return "UTF-8";
+        return null;
+    }
+
+    /** 抓取结果：原始字节（已 gzip 解压）+ 响应声明的字符集（未声明为 null）。 */
+    public static final class Fetched {
+        public final byte[] data;
+        public final String charset;
+
+        public Fetched(byte[] data, String charset) {
+            this.data = data;
+            this.charset = charset;
+        }
     }
 }

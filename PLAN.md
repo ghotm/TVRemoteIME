@@ -166,3 +166,55 @@ _Locked via grill — by Claude + user（2026-09-27，用户实测反馈）_
 - 源排序/分组/编辑（改名改 API，删除重建即可）
 - 自定义 UA/Referer、本地 m3u8 代理（Phase 2）
 - 收藏/历史/连播（既有 Out of scope）
+
+# Plan: 任务八 — 直播源更新（利用 awesome-zhuiju-free 的 tvbox_config）
+
+_Locked via grill（3 项决策）+ oracle Round 1-2 修订 — by Claude + 用户_
+
+## Goal
+在视频 Tab 的现有直播区内新增「从仓库更新直播源」入口：从 awesome-zhuiju-free 的 tvbox_config 配置中提取 `lives[]` 直播源清单，用户点选某个源后，下载该直播列表 → 自动识别格式（M3U / TVBox txt）→ 转换为本项目 tv.txt 格式 → 整体替换（替换前自动备份）→ 前端刷新列表。手动为主，不做每日自动。
+
+## 关键事实（评审确认）
+- 现有 `tv.txt` 真实格式（`ime_core.js:26-60 parseTVData` 解析）：**方括号行是分组 `[分组名]`**，组内每行 **`频道名=url`**（name 为频道名/源名，url 为地址）；渲染时 `.tv-item` 显示分组名，组内每个 `频道名` 作为可点播链接。转换器必须输出 `[分组名]` + `频道名=url`，**不能**输出 `[频道名|分组]`。
+- `TVRequestProcesser` 以 **UTF-8** 读写 tv.txt（`FileOutputStream` 直写，非原子）。
+- `HttpFetcher.fetch()` 只返回 `String`（内部 `parseCharset` 默认 UTF-8 解码）→ GBK 回退必须拿到原始字节。
+
+## Approach
+1. **HttpFetcher 扩展**：新增 `public static Fetched fetchBytes(String url[, headers, connectTimeout, readTimeout])`，复用现有重定向/SSRF/gzip 逻辑，返回 `{ byte[] data; String charset /* 声明或 null */ }`。**必须保证：(a) 每一跳重定向仍调用 `checkPublicUrl`；(b) 返回的 data 是 gzip 解压后的字节**（沿用现有 `GZIPInputStream` 包裹顺序，勿漏）。原 `fetch(String)` 保留（内部委托 fetchBytes 后按 charset 解码）。`Fetched` 为静态内部类。
+2. **LiveListConverter**（新类）：
+   - 输入 `byte[]` + 声明 charset。解码候选：声明 charset（若非法则忽略）→ UTF-8 → GBK；选择**解码后 U+FFFD 替换字符最少**的结果。
+   - 识别：去 BOM；`trim` 后以 `#EXTM3U` 开头 → M3U，否则 TVBox txt。
+   - M3U：逐行；`#EXTINF:` 行取 `group-title`（缺省分组「直播」），频道名取**最后一个逗号之后**的内容；下一非 `#` 非空行 = url。相同 (分组, 频道名) **合并为多源**。无 `#EXTINF` 的裸 url 行 → 归默认分组，名称回退「源N」。
+   - TVBox txt：`X,#genre#` 设当前分组；其余含 `,` 行 `频道名,url1#url2` → 频道 + 多源（`#` 分隔）；非 `#genre#` 的 `#`/`//` 开头行按注释忽略；无分组行归「直播」。
+   - **输出 tv.txt（UTF-8）**：按分组输出 `[分组名]`，组内每个源的每个 url 一行 `频道名=url`；同频道多源时名称加后缀（`频道名`、`频道名(2)`…）避免重复；分组间空行。**不丢弃任何 url**（含内网 IPTV 地址）。
+3. **LiveRequestProcesser**（server/，注册 RemoteServer GET/POST 两组）：
+   - `GET /live/sources[?refresh=1]`：**后台单线程 executor + AtomicBoolean 互斥**；扫描 resources.json（github raw → CDN 备选）→ category=="tvbox_config" 逐配置 `fetchBytes`（短超时）解析 JSON 取顶层 `lives[]` → 聚合。**统一 schema** `{name, configName, url, error}`（失败项 `name`/`url` 为空串、`error` 有值，前端据此禁用「应用」）。结果写 `live_sources.json`（含 lastUpdated）。请求**返回当前缓存**；正在刷新则返回 `{refreshing:true, list:缓存}`；首次无缓存则触发刷新并返回 `{refreshing:true, list:[]}`。解析失败不阻塞整体，`error` 含 SSRF 拒绝/非 JSON 原因。
+   - `POST /live/apply {url, name}`（`name` 仅用于日志/成功提示，不参与解析）：`fetchBytes` → LiveListConverter 转换 → **在 tv.txt 共享锁内**：把当前 tv.txt 备份为 `tv.txt.bak.<yyyyMMddHHmmss>`（保留最近 3 份，自动清理更旧）→ 原子写 tv.txt（临时文件 + rename）→ 返回 `{code:"ok", msg, channelCount, sourceCount, backup}`。任何失败**不触碰** tv.txt。
+   - `GET /live/backups`：锁内返回备份列表 `[{file, time, size}]`（按时间倒序，最多 3 项）。
+   - `POST /live/restore {file}`：锁内；`file` 必须是 basename 且形如 `tv.txt.bak.<数字>`（防路径穿越），且存在于备份列表 → 把该备份原子还原为 tv.txt → 返回 `{code:"ok",msg,time}`；非法/不存在 → `{code:"error",msg:"备份不存在"}`。**还原可逆**：用户可选择任意一份历史备份。
+   - **共享锁**：在 `RemoteServerFileManager` 增 `public static final Object tvFileLock = new Object();`；`TVRequestProcesser` 的 GET/POST 读写 tv.txt 与 LiveRequestProcesser 的所有 tv.txt 读写**全部 synchronized(tvFileLock)**，消除并发写坏竞态。
+4. **前端（video tab 直播区）**：
+   - index.html：`.tv-header` 加 `<button id="btnLiveUpdate">📡 从仓库更新</button>`；新增 `#liveSourcePanel.hidden`（`#liveSourceStatus` + `#btnLiveRefresh` + `#btnLiveRestore` + `#btnLivePanelClose` + `.live-source-list`）。
+   - ime_core.js：`liveLoadSources(force)` → GET `/live/sources`（force 时 `refresh=1`）→ 渲染 `.live-source-item`（源名 + 来源配置名 + 「应用」按钮；有 `error` 的标灰禁点）+ 若 `refreshing` 显示「正在获取配置…」并 3s 后重试；`liveApply(url,name)` → confirm → POST `/live/apply` → 成功 alert（频道数/源数）+ 若编辑器可见先隐藏（防覆盖未保存内容）+ `loadTVList()`；失败 alert msg。`liveRestore()` → GET `/live/backups` → 若空则 alert「暂无备份」；否则用简单列表/confirm 展示各时间戳供选择 → POST `/live/restore {file}` → `loadTVList()`。绑定 `#btnLiveUpdate` 展开面板并首次加载、`#btnLiveRefresh` 强制刷新、`#btnLiveRestore`、`#btnLivePanelClose`。
+   - style.css：`.live-source-*` 面板/列表项/按钮样式。
+5. **验证**：`node --check ime_core.js`；提交 feature/movie-station；用户 push CI → BlueStacks 验证。
+
+## Key decisions & tradeoffs
+- 入口在现有直播区（用户选定）；整体替换 + **时间戳备份（最近 3 份，可选择还原）**（用户选定「自动备份」）；手动为主（用户选定）。
+- 转换输出严格对齐现有 `parseTVData` 语义（`[分组]` + `频道名=url`）。
+- 直播列表下载走 SSRF 防护；生成的 tv.txt 保留原始直播 url（含内网 IPTV）。
+- 编码：声明 charset 优先，UTF-8/GBK 择优（按 U+FFFD 最少）。
+- tv.txt 所有读写共用 `tvFileLock`。
+- `name` 参数仅展示用途；`/live/restore` 通过备份文件名白名单校验防路径穿越。
+
+## Risks / open questions
+- 多数 tvbox_config 配置无法直接解析（非 JSON/加密/多仓），可用 lives 可能有限；容错并在 UI 如实反馈「解析到 N 个源」与失败原因。
+- 部分直播列表 url 为接口（需 token/过期）或不稳定，可能失效；MVP 不做有效性预检。
+- 首次刷新需下载多个配置，耗时较长 → 后台任务 + 缓存 + 前端轮询。
+- 大文件（610KB）转换内存：一次性读取可接受。
+
+## Out of scope
+- 直播源每日自动更新（用户选手动）。
+- 多源合并追加（用户选替换）。
+- 直播源有效性检测/排序。
+- 加密配置（AES/Base64）与多仓 urls[] 展开（跳过容错）。
