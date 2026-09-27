@@ -93,6 +93,8 @@ public class VideoPlayHelper {
         // 内置 ijkplayer 通道（默认）
         try {
             IjkVideoView.sUserAgent = DEFAULT_UA;
+            IjkVideoView.sLastError = null;
+            IjkVideoView.sLastErrorTime = 0;
             XLVideoPlayActivity.intentTo(XLVideoPlayActivity.class, context, url, title,
                     videoIndex, forceVod);
             markPlaying(url);
@@ -245,5 +247,15 @@ public class VideoPlayHelper {
 
     public static long getLastPlayTime() {
         return lastPlayTime;
+    }
+
+    /** 最近一次内置播放器错误（framework_err/impl_err）；无错误为 null。-10000 表示 IJK 通用错误。 */
+    public static String getLastPlayError() {
+        return IjkVideoView.sLastError;
+    }
+
+    /** 最近一次内置播放器错误发生时间（毫秒）；无错误为 0。 */
+    public static long getLastPlayErrorTime() {
+        return IjkVideoView.sLastErrorTime;
     }
 }

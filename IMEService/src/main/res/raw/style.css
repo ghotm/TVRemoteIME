@@ -1811,3 +1811,6 @@ body {
 	border-radius: 4px;
 	font-size: 13px;
 }
+
+/* 播放错误提示条（Web 端透出 ijkplayer 错误，便于诊断） */
+.play-error{margin-top:8px;padding:8px 10px;border-radius:4px;background:#fff2f0;border:1px solid #ffccc7;color:#a8071a;font-size:13px;line-height:1.5;word-break:break-all;}

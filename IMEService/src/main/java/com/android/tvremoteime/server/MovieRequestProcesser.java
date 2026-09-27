@@ -131,6 +131,9 @@ public class MovieRequestProcesser implements RequestProcesser {
                         o.put("isPlaying", VideoPlayHelper.isPlaying());
                         o.put("lastPlayUrl", VideoPlayHelper.getLastPlayUrl() != null
                                 ? VideoPlayHelper.getLastPlayUrl() : "");
+                        o.put("lastPlayError", VideoPlayHelper.getLastPlayError() != null
+                                ? VideoPlayHelper.getLastPlayError() : "");
+                        o.put("lastPlayErrorTime", VideoPlayHelper.getLastPlayErrorTime());
                         return jsonResponse(o);
                     }
                     break;

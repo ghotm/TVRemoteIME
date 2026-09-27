@@ -1095,6 +1095,14 @@ function movieRefreshPlayState() {
 		} else {
 			$('#moviePlayState').text('播放：未播放');
 		}
+		// 播放错误透出到 Web 端（便于诊断，如 ijkplayer err=-10000）
+		if (data.lastPlayError) {
+			var t = data.lastPlayErrorTime ? new Date(data.lastPlayErrorTime).toLocaleTimeString() : '';
+			$('#playErrorStatus').removeClass('hidden')
+				.text('播放错误（' + t + '）：' + data.lastPlayError + '　地址：' + (data.lastPlayUrl || ''));
+		} else {
+			$('#playErrorStatus').addClass('hidden').text('');
+		}
 	}).fail(function() {});
 }
 

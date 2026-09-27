@@ -71,6 +71,11 @@ public class IjkVideoView extends FrameLayout implements MediaController.MediaPl
     /** 播放 http(s) 流时的默认 User-Agent（影视仓等场景注入），null 则不设置。 */
     public static volatile String sUserAgent = null;
 
+    /** 最近一次播放错误（framework_err/impl_err），供 Web 端透出诊断。-10000 = IJK 通用错误。 */
+    public static volatile String sLastError = null;
+    /** 最近一次播放错误发生时间（毫秒）。 */
+    public static volatile long sLastErrorTime = 0;
+
     // all possible internal states
     private static final int STATE_ERROR = -1;
     private static final int STATE_IDLE = 0;
@@ -344,6 +349,8 @@ public class IjkVideoView extends FrameLayout implements MediaController.MediaPl
 
     @TargetApi(Build.VERSION_CODES.M)
     private void openVideo() {
+        sLastError = null;
+        sLastErrorTime = 0;
         if (mUri == null || mSurfaceHolder == null) {
             // not ready for playback just yet, will try again later
             return;
@@ -576,6 +583,8 @@ public class IjkVideoView extends FrameLayout implements MediaController.MediaPl
             new IMediaPlayer.OnErrorListener() {
                 public boolean onError(IMediaPlayer mp, int framework_err, int impl_err) {
                     Log.d(TAG, "Error: " + framework_err + "," + impl_err);
+                    sLastError = "framework=" + framework_err + ", impl=" + impl_err;
+                    sLastErrorTime = System.currentTimeMillis();
                     mCurrentState = STATE_ERROR;
                     mTargetState = STATE_ERROR;
                     if (mMediaController != null) {
