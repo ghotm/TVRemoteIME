@@ -101,3 +101,76 @@ PLAN.md 已按以上裁定修订。
 | 2 | REVISE | 源码复评：删 .m3u8=直播启发式→显式 forceVod、解析补 split($,2)+集数倒序、线路兜底对齐、本地 m3u8 代理改 Phase 2、/play 预留 headers、加密/多仓配置容错；确认 ids=/$$$/明文/原子写被源码印证 |
 | 3 | REVISE | forceVod 四环节落点（切集复用路径 isLive 复发）、useSystem 忽略 forceVod、lastProbeError |
 | 4 | APPROVED | 全部落实 + intentTo 复用同步 forceVod 边缘加固 |
+
+---
+
+# 任务五评审日志：影视仓 UI / 源管理补丁
+Act 1 (grill) complete — 用户选定：左右分栏 / 源管理子视图切换 / 添加+删除+恢复内置。MAX_ROUNDS=5。
+
+## Round 1 — oracle（2026-09-27）→ VERDICT: REVISE
+
+> 评审输出（摘要）：2 项高 + 5 项建议：
+> 1.【高】add/remove/reseed/toggle 与 `updateSourcesSync` 的 read-modify-write 竞态——updateSourcesSync 无锁，长时间扫描后整体覆盖，期间用户增删会「删了复活/加了丢失」
+> 2.【高】key 生成与去重不可靠——内置短 key（hhzy/ikun）vs 扫描/手动 `s+hashCode`，同 api 两种 key 并存重复；hashCode 碰撞；按 name 去重误伤
+> 3.【中】reseed 匹配标准未定义（按 key 还是 api），可能重复
+> 4.【中】addSource 的 probe 仅裸 GET api 根，「非空即通过」门槛弱，会放行错误页
+> 5.【低】响应 code 约定不一致（0/"ok"/"error"）、前端缺失败反馈
+> 6.【低】scrollIntoView 时机（AJAX 渲染前调用会滚不到位）+ 删「返回列表」后窄屏回退
+> 7.【低】addSource 受 SSRF 阻断，LAN 自建源无法添加且无明确提示
+
+### Claude's response（最终裁决）
+- **采纳 1**：`updateSourcesSync` 最后保存阶段移入 `synchronized(this)`，锁内重新 `loadSources()` 读最新文件，只并入「扫描新增项」，保留用户扫描期间的增删/启停；probe 结果只更新新增项
+- **采纳 2**：新增 `normalizeApi`（trim + 去尾 `/`）与 `apiKey`，**去重一律按归一化 api**（`findByApi`），`uniqueKey()` 处理 hashCode 碰撞；内置源按 api 与新源互认
+- **采纳 3**：reseed 按归一化 api 匹配，命中复用、未命中才以固定 key 补回
+- **采纳 4**：addSource 改用增强探测 `probeAdd`（请求 `{api}?ac=detail&wd=test`，要求响应含 `list`）
+- **采纳 5**：新端点统一 `{code:"ok"/"error", msg}`；前端 addSource 失败 alert msg、remove/reseed 提示
+- **采纳 6**：scrollIntoView 移到详情 AJAX success 回调末尾；新增 `#movieBackTop`「↑ 回到列表」按钮仅窄屏显示
+- **采纳 7**：addSource 失败时把具体原因（SSRF 拒绝/超时/无响应）作为 msg 返回前端；PLAN Risks 注明 LAN 源限制
+
+PLAN.md 任务五章节已按以上裁定修订；进入 Round 2 复评。
+
+## Round 2 — oracle（2026-09-27）→ VERDICT: REVISE
+
+> 评审输出（摘要）：7 项中 5 项完整落实；1 高 + 4 中低：
+> A.【高】合并判定自相矛盾——PLAN 去重说统一 findByApi，但 updateSourcesSync 合并仍写「当前文件缺失的 key」→ 内置源(hhzy key)会被扫描到的同 api(apiKey=s+hash)当新增插入，每天更新产生重复条目
+> B.【中】probe 状态只更新新增项 → 现有源 status/lastProbeError 永久冻结，UI 色标失真
+> C.【低】uniqueKey 碰撞后缀非 api 纯函数、且需在锁内基于最新文件计算
+> D.【低】前端 subnav 按钮需避免与既有 `button.tab[data-tab="movie"]` 委托 handler 冲突；进入 movie tab 仍应触发 movieLoadSources
+> E.【低】新端点 code("ok"/"error" 字符串)与既有端点 code:0(数字)类型不一致
+
+### Claude's response（最终裁决）
+- **采纳 A**：合并判定统一 `findByApi`——锁外扫描 collect 新增候选时即按归一化 api 去重（命中只补 status 不新增），内置源与扫描源互认
+- **采纳 B**：probe 改为对「现有源 + 新增候选」全部执行（并发小池），刷新全部源的状态，不再冻结
+- **采纳 C**：uniqueKey 在 `synchronized(this)` 内基于最新 `loadSources()` 的 key 集合计算；addSource/removeSource/reseed 均在锁内执行（同 doToggleSource 模式）
+- **采纳 D**：subnav 按钮用独立 class/id、**不带 data-tab 属性**（避免误触发 movie tab 委托）；保留「进入 movie tab 即 movieLoadSources()」既有逻辑，切源管理子视图时再刷一次
+- **采纳 E**：新端点统一 `{code:"ok"/"error", msg}`；前端各 handler 按端点检查对应字段，避免混淆
+
+PLAN.md 任务五章节已修订；进入 Round 3 复评。
+
+## Round 3 — oracle（2026-09-27）→ VERDICT: REVISE
+
+> 评审输出（摘要）：上轮主因 A（合并判定）/B（状态冻结）已真正解决；新暴露实质问题 N1：删除非内置源会被下一次每日更新「复活」——③「以最新文件为基底 + 按 findByApi 并入真正新增项」只保证扫描期间删除不被覆盖；对上一轮更新之后删除的扫描源，其 api 仍在 tvbox 配置里，findByApi(最新文件) 返回 null → 被当新增项重新写入，每 24h 复活一次；且 Risks:160 措辞过度声称。N2：③逐项覆盖 status 对「扫描期间用户 addSource 但不在 probe 集合」的源语义不清。N3/N4：D（subnav/data-tab/进入 tab 加载）与 E（code 约定）仍未闭合。
+
+### Claude's response（最终裁决）
+- **采纳 N1（核心）**：引入持久化「墓碑集 `removedApis`」（movie_sources.json 顶层数组）——removeSource 写墓碑、addSource 成功撤销、reseed 撤销内置源墓碑；updateSourcesSync 新增候选判定 = findByApi 不存在 且 不在 removedApis（永久跳过墓碑）；Risks 修正措辞
+- **采纳 N2**：③ 明确「仅对 ② 有 probe 结果的 key 覆盖 status/lastProbeError，其余保持原值」
+- **采纳 N3**：subnav 独立 class 不带 data-tab；进入 movie tab 即 movieLoadSources()+movieRefreshPlayState()（保留 :1070 逻辑）
+- **采纳 N4**：前端按端点分别判断双套 code 约定并写明
+
+PLAN.md 任务五章节已修订；进入 Round 4 复评。
+
+## Round 4 — oracle（2026-09-27）→ ✅ VERDICT: APPROVED
+
+> 评审输出（摘要）：N1-N4 全部落实且墓碑方案并发自洽；未发现新实质问题。仅 3 处低 severity 实现级注意点：n1 probeAdd 网络 I/O 若整体在 synchronized(this) 内会短暂阻塞其他操作（推荐接受当前全锁内安全实现）；n2 ensureSeeded 首启未初始化 removedApis:[]（需 optJSONArray 空安全）；n3 removeSource 对不存在 key 应优雅返回 {code:"error",msg:"源不存在"} 不写墓碑。
+
+### Claude's response（最终裁决）
+- 全锁内安全实现照旧（单用户场景数秒串行可接受）；**n2/n3 直接纳入实现**（ensureSeeded 写 removedApis:[]、removeSource key 空返回不写墓碑）
+- **评审结束**：4 轮，VERDICT: APPROVED。任务五计划锁定，等待用户签收后进入实现。
+
+## 评审总结（任务五，4 轮）
+| Round | 结果 | 主要产出 |
+|-------|------|---------|
+| 1 | REVISE | updateSourcesSync 竞态、key/去重不可靠、reseed 匹配、probeAdd 增强探测、code 统一+前端反馈、scrollIntoView+窄屏回退、SSRF 提示 |
+| 2 | REVISE | 合并判定统一 findByApi（内置源不被扫描重复）、全源 probe 不冻结、uniqueKey 锁内计算、subnav 避让 data-tab、双套 code 约定 |
+| 3 | REVISE | 墓碑集 removedApis 删除持久化、status 覆盖语义、D/E 闭合 |
+| 4 | APPROVED | N1-N4 全部落实；实现级注意点 n2/n3 纳入实现 |

@@ -256,32 +256,52 @@
 		<!-- Tab Content: 影视仓 -->
 		<div class="tab-content hidden" data-tab="movie">
 			<section class="movie-panel">
-				<div class="movie-toolbar">
-					<div class="input-row">
-						<input type="text" id="movieSearchInput" placeholder="搜索影视，如：庆余年" aria-label="影视搜索" class="movie-search-input">
-						<button type="button" class="btn-primary" id="movieSearchBtn">搜索</button>
-						<button type="button" class="btn-secondary" id="movieUpdateBtn">检查更新源</button>
+				<!-- 子导航：搜索 / 源管理（不带 data-tab，避免与顶部 tab 委托冲突） -->
+				<div class="movie-subnav">
+					<button type="button" class="movie-subnav-btn active" data-subnav="search">搜索</button>
+					<button type="button" class="movie-subnav-btn" data-subnav="source">源管理</button>
+				</div>
+
+				<!-- 搜索子视图（左右分栏：结果列表 | 详情） -->
+				<div id="movieSearchView">
+					<div class="movie-toolbar">
+						<div class="input-row">
+							<input type="text" id="movieSearchInput" placeholder="搜索影视，如：庆余年" aria-label="影视搜索" class="movie-search-input">
+							<button type="button" class="btn-primary" id="movieSearchBtn">搜索</button>
+						</div>
+						<div class="movie-status-row">
+							<span id="movieSearchStatus"></span>
+							<span id="moviePlayState">播放：--</span>
+						</div>
 					</div>
-					<div class="movie-status-row">
-						<span id="movieSearchStatus"></span>
-						<span id="moviePlayState">播放：--</span>
+					<div class="movie-split">
+						<div class="movie-results" id="movieResults">
+							<div class="movie-result-list" id="movieResultList"></div>
+						</div>
+						<div class="movie-detail" id="movieDetail"></div>
 					</div>
 				</div>
 
-				<div class="movie-results hidden" id="movieResults">
-					<div class="movie-result-list" id="movieResultList"></div>
-				</div>
-
-				<div class="movie-detail hidden" id="movieDetail"></div>
-
-				<div class="movie-sources">
-					<div class="tv-header">
-						<span class="tv-title">源管理：</span>
-						<span class="tv-hint" id="movieSourcesStatus"></span>
+				<!-- 源管理子视图 -->
+				<div id="movieSourceView" class="hidden">
+					<div class="movie-toolbar">
+						<div class="input-row">
+							<button type="button" class="btn-primary" id="movieUpdateBtn">检查更新源</button>
+							<button type="button" class="btn-secondary" id="movieReseedBtn">恢复内置源</button>
+						</div>
+						<div class="movie-status-row">
+							<span id="movieSourcesStatus"></span>
+						</div>
+					</div>
+					<div class="movie-add-form">
+						<input type="text" id="movieAddName" placeholder="源名称" aria-label="源名称">
+						<input type="text" id="movieAddApi" placeholder="接口地址，如 https://xxx/api.php/provide/vod/" aria-label="接口地址">
+						<button type="button" class="btn-primary" id="movieAddBtn">添加</button>
 					</div>
 					<div class="movie-source-list" id="movieSourceList"></div>
 				</div>
 			</section>
+			<button type="button" id="movieBackTop">↑ 回到列表</button>
 		</div>
 	</div>
 

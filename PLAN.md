@@ -94,3 +94,75 @@ _Revised after adversarial review (oracle) Round 1 — 见 PLAN-REVIEW-LOG.md_
 - 直播源（lives）接入
 - 搜索结果分页（`pg` 参数，后续按需）
 - 电影端点鉴权体系
+
+---
+
+# Plan: 任务五 — 影视仓 UI / 源管理补丁
+_Locked via grill — by Claude + user（2026-09-27，用户实测反馈）_
+
+## Goal
+
+修复用户实测的 3 个问题：①详情在列表下方需拖动才能看到选集 ②「返回列表」交互无感（只隐藏内容）③源管理埋在页面底部不可见、且后端缺手动维护能力；补齐 grill 已确认但未实现的手动添加/删除/恢复内置源。
+
+## Approach
+
+### 1. 布局：左右分栏（用户选定）
+- `index.html` 影视仓 Tab（`data-tab="movie"`）内重构：
+  - 顶部「搜索 / 源管理」子导航 `.movie-subnav`（两个 `.movie-subnav-btn`）
+  - 搜索子视图 `#movieSearchView`：工具栏 + `.movie-split` 分栏容器
+    - 左栏 `#movieResults > #movieResultList`（结果列表，正常流）
+    - 右栏 `#movieDetail`（详情，常驻显示，空态提示"选择左侧影片查看详情"）
+  - 源管理子视图 `#movieSourceView`（默认 hidden）
+- 点卡片 → 右栏填充详情（选集立即可见），不再上下堆叠
+- **删除「返回列表」按钮**（分栏下无意义，仅保留「用系统播放器播放」按钮）
+- `style.css`：`.movie-split` flex；右栏 `position:sticky; top` + `max-height:calc(100vh-…)` + `overflow-y:auto`(选集常驻可见)；**media query ≤1000px 转上下堆叠**（左列表在上、详情在下）且点击卡片时 `scrollIntoView` 滚动到详情
+
+### 2. 源管理：独立子视图（用户选定）
+- 子导航切到「源管理」→ `#movieSearchView` hidden、`#movieSourceView` 显示
+- `#movieSourceView` 内容：
+  - `#movieUpdateBtn`（检查更新源，原在顶部工具栏，移入此处）+ `#movieReseedBtn`（恢复内置源）+ `#movieSourcesStatus`
+  - 添加表单：#movieAddName / #movieAddApi / #movieAddBtn
+  - `#movieSourceList`：每项显示 启停 checkbox、名称、status、lastProbeError（title 悬浮）、api、**删除按钮**（内置源也允许删；删除后写入墓碑不会被更新复活，如需找回内置源用「恢复内置」；前端删除前 `confirm` 提示）
+
+### 3. 后端 MovieRequestProcesser 补齐（经 oracle Round 1 REVISE 修订）
+- **key 与去重统一**：新增 `normalizeApi(api)`（trim + 去尾部 `/`）与 `apiKey(api) = "s"+Integer.toHexString(normalizeApi(api).hashCode())`；**去重一律按归一化 api 匹配**（`findByApi`），不再按 name 或裸 hashCode key；`uniqueKey()` 处理 hashCode 碰撞（同 key 且 api 不同则追加 `_1/_2…`）
+- **删除持久化（墓碑集，Round 3 修订）**：`movie_sources.json` 增加顶层字段 `removedApis`（归一化 api 字符串数组）。`removeSource` 删除源时把其归一化 api 写入 `removedApis`；`addSource` 成功添加时从 `removedApis` 移除该 api（用户主动重加即撤销墓碑）；`reseed` 恢复内置源时从 `removedApis` 移除内置源的 api。`updateSourcesSync` 的新增候选判定必须同时满足「`findByApi` 在当前文件不存在」**且**「api 不在 `removedApis`」，否则永久跳过——确保用户删掉的扫描源不会被每日更新复活
+- `POST /movie/addSource {name, api}`：name/api 非空校验 → `findByApi` 已存在则返回提示 → **增强探测 `probeAdd(api)`**（请求 `{api}?ac=detail&wd=test`，要求响应含 `list` 字段才算通过，短超时）→ 通过才新建保存（key=apiKey）→ 失败把具体原因（含 SSRF 拒绝/超时/无响应）作为 msg 返回
+- `POST /movie/removeSource {key}`：从 sources 数组移除、把该源归一化 api 加入 `removedApis`、原子保存（删除持久，不会被后续更新复活）
+- `POST /movie/reseed`：对 BUILTIN_SOURCES 逐条按归一化 api 匹配，命中（含手动/扫描同源）则复用不补；未命中才以固定 key（hhzy/ikun）补回，enable 默认 true；**恢复的同时从 `removedApis` 移除对应 api**（撤销墓碑）
+- **竞态修复（Round 2 + Round 3 修订）**：`updateSourcesSync` 三段式——①锁外扫描收集新增候选，**去重判定统一按 `findByApi`（归一化 api）**：命中即视为已存在、不新增（内置源 hhzy 与扫描到的 hhzyapi 互认，杜绝重复）；**且 api 命中 `removedApis` 墓碑时永久跳过**；②锁外对「现有源 + 新增候选」**全部执行 probe**（并发小池），刷新 status/lastProbeError（现有源状态不再冻结）；③`saveSources` 前置 `synchronized(this)` 锁内**重新 `loadSources()` 读取最新文件**（权威基线，含用户扫描期间的增删）：以最新文件为基底，**仅对 ② 中有 probe 结果的 key** 覆盖 status/lastProbeError（**不动 enable、不复活已删项**；扫描期间用户新加但未参与 ② 的源保持原值），再按 findByApi 并入真正新增项（须同时满足非墓碑；key 在锁内基于最新文件的 key 集合用 `uniqueKey` 计算，碰撞后缀 `_1/_2` 同锁内保证唯一）→ 原子保存。addSource/removeSource/reseed 同样在 `synchronized(this)` 内执行
+- 新增端点统一响应约定：复用既有 `message("ok", msg)` → `{code:"ok", msg}` 与 `error(msg)` → `{code:"error", msg}`；前端按端点分别判断（sources/search/detail 看 `code==0` 与 `list` 字段；addSource/removeSource/reseed 看 `code` 是否为 `"ok"`，失败取 `msg` alert）——双套 code 属既有约定，此处明确以免混淆
+- 路由 switch 追加 addSource / removeSource / reseed 三个 case
+
+### 4. 前端交互（ime_core.js / style.css）（经 oracle Round 1 修订）
+- `movieSearch()`：搜索时清空右栏显示空态
+- `movieDetail()`：渲染到右栏（去掉 hidden 切换与「返回列表」按钮逻辑）；**`scrollIntoView` 放在详情 AJAX success 回调末尾**（窄屏堆叠时滚动到详情）
+- 子视图切换：`.movie-subnav-btn` 使用独立 class、**不带 `data-tab` 属性**（避免误触发既有 `button.tab[data-tab="movie"]` 委托）；点击互切 `#movieSearchView`/`#movieSourceView` 的 hidden；**进入 movie tab 即调 `movieLoadSources()` + `movieRefreshPlayState()`**（保留既有 :1070 逻辑），切到源管理时再刷一次 `movieLoadSources()`
+- **窄屏回退**：`#movieBackTop`「↑ 回到列表」按钮，CSS 默认隐藏、`@media(max-width:1000px)` 显示，点击滚动回列表顶部
+- `movieLoadSources()` 扩展：删除按钮 → `confirm` 后 POST /movie/removeSource → 重载+提示（"已删除，不会被自动更新恢复"）；添加按钮 → POST /movie/addSource → 成功重载+清空表单、**失败 alert 后端 msg**；reseed → POST /movie/reseed → 重载+提示
+- style.css 新增子导航/分栏/表单/删除按钮/回到列表按钮样式 + 分栏↔堆叠 media query
+
+### 5. 构建验证
+- 提交 feature/movie-station → 用户 push 触发 CI → 构建通过后浏览器验证布局与源管理、装电视验证
+
+## Key decisions & tradeoffs
+
+- **左右分栏**（用户选定，替代我的主从切换推荐）：电视大屏友好、结果与详情同时可见、"返回列表"按钮冗余可删；窄屏靠 media query 转堆叠 + 自动滚动兜底
+- **子视图切换的源管理**：源管理不再埋在页面底部，入口明确
+- **添加+删除+恢复内置（墓碑集）**：删除写入 `removedApis` 墓碑使其持久（不被每日更新复活）；重新 addSource 同 api 或 reseed 内置源时清除对应墓碑；内置源可删、可一键恢复
+- **key/去重统一按归一化 api 匹配**：内置固定短 key 与扫描/手动 `apiKey` 并存时按归一化 api 命中互认，避免同源重复；不再按 name 去重（会误伤同名不同 api）
+- **addSource 以增强探测通过为准**：请求 `{api}?ac=detail&wd=test` 且响应含 `list` 才算可达（裸 GET 返回 HTML 的假地址会被拒）；复用 HttpFetcher 的 SSRF/超时校验；失败即时反馈具体原因不落盘
+- **无返回列表按钮**：分栏模式详情常驻，点卡片即换详情，"返回"语义消失（窄屏堆叠场景改用「↑ 回到列表」小按钮补救）
+
+## Risks / open questions
+
+- 分栏在 ≤1000px 需验证手机端体验（堆叠 + 「↑ 回到列表」按钮）
+- 自定义源可达但需 UA/Referer 的仍可能播不了（Phase 2 本地 m3u8 代理，已知）
+- 删除持久性由墓碑集 `removedApis` 保证：扫描合并时跳过墓碑 api（锁内重读最新文件只并入非墓碑新增项），用户删掉的源不会被每日更新复活；恢复途径为重新添加同 api 或点「恢复内置」
+- **LAN 内网自建苹果CMS 源会被 SSRF 防护拒绝**（HttpFetcher 阻断私网/环回地址），该限制会在 addSource 失败信息中明确提示
+
+## Out of scope
+
+- 源排序/分组/编辑（改名改 API，删除重建即可）
+- 自定义 UA/Referer、本地 m3u8 代理（Phase 2）
+- 收藏/历史/连播（既有 Out of scope）

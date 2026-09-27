@@ -110,6 +110,21 @@ public class MovieRequestProcesser implements RequestProcesser {
                         return doToggleSource(params.get("key"), params.get("enable"));
                     }
                     break;
+                case "/movie/addSource":
+                    if (session.getMethod() == NanoHTTPD.Method.POST) {
+                        return doAddSource(params.get("name"), params.get("api"));
+                    }
+                    break;
+                case "/movie/removeSource":
+                    if (session.getMethod() == NanoHTTPD.Method.POST) {
+                        return doRemoveSource(params.get("key"));
+                    }
+                    break;
+                case "/movie/reseed":
+                    if (session.getMethod() == NanoHTTPD.Method.POST) {
+                        return doReseed();
+                    }
+                    break;
                 case "/movie/playState":
                     if (session.getMethod() == NanoHTTPD.Method.GET) {
                         JSONObject o = new JSONObject();
@@ -161,6 +176,7 @@ public class MovieRequestProcesser implements RequestProcesser {
             }
             data.put("version", 1);
             data.put("lastUpdated", 0L);
+            data.put("removedApis", new JSONArray());
             data.put("sources", arr);
             saveSources(data);
         } catch (JSONException ignored) {
@@ -292,6 +308,235 @@ public class MovieRequestProcesser implements RequestProcesser {
         } catch (JSONException e) {
             return error("json_error");
         }
+    }
+
+    // ---------------------------------------------------------------- 源增删（手动维护）
+
+    /** 手动添加自定义源：{name, api}。增强探测通过才保存，失败返回具体原因。 */
+    private NanoHTTPD.Response doAddSource(String name, String api) {
+        if (TextUtils.isEmpty(name)) {
+            return error("缺少名称 name");
+        }
+        if (TextUtils.isEmpty(api)) {
+            return error("缺少接口地址 api");
+        }
+        final String napi = normalizeApi(api);
+        if (TextUtils.isEmpty(napi)) {
+            return error("接口地址无效");
+        }
+        synchronized (this) {
+            JSONObject data = loadSources();
+            JSONObject exist = findByApi(data, napi);
+            if (exist != null) {
+                return error("该接口已存在（" + exist.optString("name", "") + "）");
+            }
+            // 增强探测：{api}?ac=detail&wd=test 响应须含 list（在锁内串行执行，单用户可接受）
+            String probeErr = probeAdd(napi);
+            if (probeErr != null) {
+                return error("添加失败：" + probeErr);
+            }
+            try {
+                String key = uniqueKey(data, napi);
+                JSONObject s = new JSONObject();
+                s.put("key", key);
+                s.put("name", name.trim());
+                s.put("api", napi);
+                s.put("enable", true);
+                s.put("status", "recommended");
+                s.put("lastProbeError", "");
+                s.put("builtin", false);
+                s.put("createdAt", System.currentTimeMillis());
+                getSourcesArray(data).put(s);
+                removeFromRemovedApis(data, napi); // 重加撤销墓碑
+                saveSources(data);
+                return jsonResponse(message("ok", "已添加"));
+            } catch (JSONException e) {
+                return error("json_error");
+            }
+        }
+    }
+
+    /** 删除源：{key}。写入墓碑集，自动更新不会复活。 */
+    private NanoHTTPD.Response doRemoveSource(String key) {
+        if (TextUtils.isEmpty(key)) {
+            return error("缺少 key");
+        }
+        synchronized (this) {
+            JSONObject data = loadSources();
+            JSONArray arr = getSourcesArray(data);
+            JSONObject found = null;
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.optJSONObject(i);
+                if (o != null && key.equals(o.optString("key"))) {
+                    found = o;
+                    arr.remove(i);
+                    break;
+                }
+            }
+            if (found == null) {
+                return error("源不存在");
+            }
+            String napi = normalizeApi(found.optString("api", ""));
+            if (!TextUtils.isEmpty(napi)) {
+                addToRemovedApis(data, napi);
+            }
+            saveSources(data);
+        }
+        try {
+            return jsonResponse(message("ok", "已删除"));
+        } catch (JSONException e) {
+            return error("json_error");
+        }
+    }
+
+    /** 恢复内置源：按归一化 api 匹配命中复用，未命中以固定 key 补回；同时撤销内置源墓碑。 */
+    private NanoHTTPD.Response doReseed() {
+        synchronized (this) {
+            JSONObject data = loadSources();
+            for (String[] b : BUILTIN_SOURCES) {
+                String bApi = b[2];
+                String napi = normalizeApi(bApi);
+                JSONObject exist = findByApi(data, bApi);
+                if (exist != null) {
+                    try {
+                        exist.put("enable", true);
+                    } catch (JSONException ignored) {
+                    }
+                } else {
+                    try {
+                        JSONObject s = new JSONObject();
+                        s.put("key", b[0]);
+                        s.put("name", b[1]);
+                        s.put("api", bApi);
+                        s.put("enable", true);
+                        s.put("status", "recommended");
+                        s.put("lastProbeError", "");
+                        s.put("builtin", true);
+                        s.put("createdAt", System.currentTimeMillis());
+                        getSourcesArray(data).put(s);
+                    } catch (JSONException ignored) {
+                    }
+                }
+                if (!TextUtils.isEmpty(napi)) {
+                    removeFromRemovedApis(data, napi);
+                }
+            }
+            saveSources(data);
+        }
+        try {
+            return jsonResponse(message("ok", "已恢复内置源"));
+        } catch (JSONException e) {
+            return error("json_error");
+        }
+    }
+
+    // ---------------------------------------------------------------- 源工具（归一化 / 墓碑集）
+
+    /** 归一化接口地址：去除首尾空白与尾部斜杠。 */
+    private static String normalizeApi(String api) {
+        if (api == null) {
+            return "";
+        }
+        String s = api.trim();
+        while (s.endsWith("/")) {
+            s = s.substring(0, s.length() - 1);
+        }
+        return s;
+    }
+
+    /** 扫描/添加源的默认 key：归一化 api 的 hashCode 十六进制。 */
+    private static String apiKey(String api) {
+        return "s" + Integer.toHexString(normalizeApi(api).hashCode());
+    }
+
+    /** 按归一化 api 在源清单中查找（去重唯一依据，内置源与扫描源互认）。 */
+    private JSONObject findByApi(JSONObject data, String api) {
+        String napi = normalizeApi(api);
+        if (TextUtils.isEmpty(napi)) {
+            return null;
+        }
+        JSONArray arr = getSourcesArray(data);
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject o = arr.optJSONObject(i);
+            if (o != null && napi.equals(normalizeApi(o.optString("api", "")))) {
+                return o;
+            }
+        }
+        return null;
+    }
+
+    /** 墓碑集（已删除的归一化 api）：自动更新扫描时永久跳过。空安全。 */
+    private Set<String> getRemovedApis(JSONObject data) {
+        Set<String> set = new HashSet<>();
+        JSONArray arr = data.optJSONArray("removedApis");
+        if (arr != null) {
+            for (int i = 0; i < arr.length(); i++) {
+                String a = arr.optString(i, "");
+                if (!TextUtils.isEmpty(a)) {
+                    set.add(a);
+                }
+            }
+        }
+        return set;
+    }
+
+    private void addToRemovedApis(JSONObject data, String napi) {
+        if (TextUtils.isEmpty(napi)) {
+            return;
+        }
+        try {
+            JSONArray arr = data.optJSONArray("removedApis");
+            if (arr == null) {
+                arr = new JSONArray();
+                data.put("removedApis", arr);
+            }
+            for (int i = 0; i < arr.length(); i++) {
+                if (napi.equals(arr.optString(i, ""))) {
+                    return;
+                }
+            }
+            arr.put(napi);
+        } catch (JSONException ignored) {
+        }
+    }
+
+    private void removeFromRemovedApis(JSONObject data, String napi) {
+        if (TextUtils.isEmpty(napi)) {
+            return;
+        }
+        JSONArray arr = data.optJSONArray("removedApis");
+        if (arr == null) {
+            return;
+        }
+        for (int i = arr.length() - 1; i >= 0; i--) {
+            if (napi.equals(arr.optString(i, ""))) {
+                arr.remove(i);
+            }
+        }
+    }
+
+    /** 生成不与现有 key 冲突的源 key（调用方须持有 synchronized(this)）。 */
+    private String uniqueKey(JSONObject data, String napi) {
+        String base = apiKey(napi);
+        Set<String> keys = new HashSet<>();
+        JSONArray arr = getSourcesArray(data);
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject o = arr.optJSONObject(i);
+            if (o != null) {
+                String k = o.optString("key", "");
+                if (!TextUtils.isEmpty(k)) {
+                    keys.add(k);
+                }
+            }
+        }
+        if (!keys.contains(base)) {
+            return base;
+        }
+        int i = 1;
+        while (keys.contains(base + "_" + i)) {
+            i++;
+        }
+        return base + "_" + i;
     }
 
     // ---------------------------------------------------------------- 搜索 / 详情
@@ -615,22 +860,165 @@ public class MovieRequestProcesser implements RequestProcesser {
         });
     }
 
-    /** 拉取 awesome-zhuiju-free → 扫描 tvbox 配置 → 提取 type=1 站点 → 探测 → 合并保存。 */
+    /** 拉取 awesome-zhuiju-free → 扫描 tvbox 配置 → 提取 type=1 站点 → 三段式合并保存。
+     *  ① 锁外扫描收集新增候选（按归一化 api 去重、跳过墓碑与已有源）
+     *  ② 锁外并发探测全部源（现有 + 候选），刷新 status/lastProbeError
+     *  ③ 锁内以最新文件为权威基线合并保存（不动 enable、不复活已删项） */
     private void updateSourcesSync() {
         long ts = System.currentTimeMillis();
-        Map<String, JSONObject> merged = new HashMap<>();
 
-        // 先载入已有源（保留用户启停状态与内置源）
-        JSONObject existing = loadSources();
-        JSONArray exArr = getSourcesArray(existing);
+        // 基于当前文件快照（权威合并以 ③ 锁内重读的最新文件为准）
+        JSONObject snapshot = loadSources();
+
+        // --- ① 锁外扫描：配置收集 → 候选站点提取 ---
+        List<ConfigRef> configs = collectConfigs();
+        List<JSONObject> probing = new ArrayList<>();          // ② 需要探测的对象：现有源 + 候选
+        Map<String, JSONObject> candidates = new HashMap<>();  // 真正新增候选：key -> obj
+        JSONArray exArr = getSourcesArray(snapshot);
         for (int i = 0; i < exArr.length(); i++) {
             JSONObject o = exArr.optJSONObject(i);
             if (o != null) {
-                merged.put(o.optString("key"), o);
+                probing.add(o);
+            }
+        }
+        Set<String> removedSet0 = getRemovedApis(snapshot);
+        int scannedConfigs = 0;
+        for (ConfigRef c : configs) {
+            if (isRemoved(c.status)) {
+                continue; // 配置级 removed / temporarily_unavailable：跳过
+            }
+            try {
+                String configBody = HttpFetcher.fetch(c.url, null, 6000, 6000);
+                if (TextUtils.isEmpty(configBody)) {
+                    continue;
+                }
+                JSONObject config = new JSONObject(configBody);
+                JSONArray sites = config.optJSONArray("sites");
+                if (sites == null) {
+                    continue;
+                }
+                scannedConfigs++;
+                for (int i = 0; i < sites.length(); i++) {
+                    JSONObject site = sites.optJSONObject(i);
+                    if (site == null) {
+                        continue;
+                    }
+                    int type = site.optInt("type", 0);
+                    if (type != 1) {
+                        continue; // 仅直连型苹果CMS
+                    }
+                    String api = site.optString("api", "");
+                    String napi = normalizeApi(api);
+                    if (TextUtils.isEmpty(napi)
+                            || !(napi.startsWith("http://") || napi.startsWith("https://"))) {
+                        continue;
+                    }
+                    // 已存在（含内置源同 api）→ 不新增；已在墓碑集 → 永久跳过
+                    if (findByApi(snapshot, napi) != null || removedSet0.contains(napi)) {
+                        continue;
+                    }
+                    String key = apiKey(napi);
+                    if (!candidates.containsKey(key)) {
+                        JSONObject s = new JSONObject();
+                        try {
+                            s.put("key", key);
+                            s.put("name", site.optString("name", api));
+                            s.put("api", api);
+                            s.put("status", c.status);
+                        } catch (JSONException ignored) {
+                        }
+                        candidates.put(key, s);
+                        probing.add(s);
+                    }
+                }
+            } catch (Exception ignored) {
+                // 单个配置失败不影响整体
             }
         }
 
-        // 1. 下载资源清单（github raw，失败切 CDN）
+        // --- ② 锁外并发探测：刷新 status / lastProbeError（现有源状态不再冻结） ---
+        if (!probing.isEmpty()) {
+            int poolSize = Math.min(probing.size(), 4);
+            ExecutorService pool = Executors.newFixedThreadPool(poolSize);
+            List<Future<?>> futures = new ArrayList<>();
+            for (JSONObject s : probing) {
+                futures.add(pool.submit(() -> probe(s)));
+            }
+            for (Future<?> f : futures) {
+                try {
+                    f.get(10, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    f.cancel(true);
+                }
+            }
+            pool.shutdownNow();
+        }
+
+        // --- ③ 锁内合并保存：权威基线 = 最新文件（含扫描期间用户增删） ---
+        synchronized (this) {
+            JSONObject latest = loadSources();
+            JSONArray latestArr = getSourcesArray(latest);
+            // 以快照探测结果为准：仅覆盖 ② probe 过的 key（不动 enable、不复活已删项）
+            Map<String, JSONObject> snapByKey = new HashMap<>();
+            for (JSONObject o : probing) {
+                snapByKey.put(o.optString("key"), o);
+            }
+            for (int i = 0; i < latestArr.length(); i++) {
+                JSONObject o = latestArr.optJSONObject(i);
+                if (o == null) {
+                    continue;
+                }
+                JSONObject snap = snapByKey.get(o.optString("key"));
+                if (snap == null) {
+                    continue; // 扫描期间用户新增的源：保持原值
+                }
+                try {
+                    o.put("status", snap.optString("status", "pending"));
+                    o.put("lastProbeError", snap.optString("lastProbeError", ""));
+                } catch (JSONException ignored) {
+                }
+            }
+            // 并入真正新增项：findByApi(latest) 为 null 且非最新墓碑
+            Set<String> removedSet1 = getRemovedApis(latest);
+            for (JSONObject c : candidates.values()) {
+                String napi = normalizeApi(c.optString("api", ""));
+                if (TextUtils.isEmpty(napi)) {
+                    continue;
+                }
+                if (findByApi(latest, napi) != null || removedSet1.contains(napi)) {
+                    continue;
+                }
+                try {
+                    String finalKey = uniqueKey(latest, napi);
+                    JSONObject s = new JSONObject();
+                    s.put("key", finalKey);
+                    s.put("name", c.optString("name", napi));
+                    s.put("api", c.optString("api"));
+                    s.put("enable", true);
+                    s.put("builtin", false);
+                    s.put("createdAt", ts);
+                    s.put("status", c.optString("status", "pending"));
+                    s.put("lastProbeError", c.optString("lastProbeError", ""));
+                    latestArr.put(s);
+                } catch (JSONException ignored) {
+                }
+            }
+            try {
+                latest.put("version", 1);
+                latest.put("lastUpdated", ts);
+                latest.put("lastScan", scannedConfigs);
+                saveSources(latest);
+            } catch (JSONException ignored) {
+            }
+            if (Environment.needDebug) {
+                Environment.debug(IMEService.TAG, "movie sources updated: total=" + latestArr.length()
+                        + ", configs=" + scannedConfigs);
+            }
+        }
+    }
+
+    /** 下载 awesome-zhuiju-free → 收集 tvbox_config 配置地址（github raw 失败切 CDN）。 */
+    private List<ConfigRef> collectConfigs() {
         String rawResources = null;
         try {
             rawResources = HttpFetcher.fetch(RAW_RESOURCES_URL, null);
@@ -642,8 +1030,6 @@ public class MovieRequestProcesser implements RequestProcesser {
             } catch (Exception ignored) {
             }
         }
-
-        // 2. 收集 tvbox_config 配置地址
         List<ConfigRef> configs = new ArrayList<>();
         if (!TextUtils.isEmpty(rawResources)) {
             try {
@@ -673,92 +1059,38 @@ public class MovieRequestProcesser implements RequestProcesser {
             } catch (JSONException ignored) {
             }
         }
-
-        // 3. 逐个配置下载并提取 type=1 站点
-        int scannedConfigs = 0;
-        for (ConfigRef c : configs) {
-            if (isRemoved(c.status)) {
-                continue; // 配置级 removed / temporarily_unavailable：跳过
-            }
-            try {
-                String configBody = HttpFetcher.fetch(c.url, null, 6000, 6000);
-                if (TextUtils.isEmpty(configBody)) {
-                    continue;
-                }
-                JSONObject config = new JSONObject(configBody);
-                JSONArray sites = config.optJSONArray("sites");
-                if (sites == null) {
-                    continue;
-                }
-                scannedConfigs++;
-                for (int i = 0; i < sites.length(); i++) {
-                    JSONObject site = sites.optJSONObject(i);
-                    if (site == null) {
-                        continue;
-                    }
-                    int type = site.optInt("type", 0);
-                    if (type != 1) {
-                        continue; // 仅直连型苹果CMS
-                    }
-                    String api = site.optString("api", "");
-                    if (TextUtils.isEmpty(api)
-                            || !(api.startsWith("http://") || api.startsWith("https://"))) {
-                        continue;
-                    }
-                    String key = "s" + Integer.toHexString(api.hashCode());
-                    JSONObject s = merged.get(key);
-                    if (s == null) {
-                        s = new JSONObject();
-                        try {
-                            s.put("key", key);
-                            s.put("name", site.optString("name", api));
-                            s.put("api", api);
-                            s.put("enable", true);
-                            s.put("builtin", false);
-                            s.put("createdAt", ts);
-                        } catch (JSONException ignored) {
-                        }
-                        merged.put(key, s);
-                    }
-                    if (s.optString("status", "").isEmpty() || "pending".equals(s.optString("status", ""))) {
-                        try {
-                            s.put("status", c.status);
-                        } catch (JSONException ignored) {
-                        }
-                    }
-                }
-            } catch (Exception ignored) {
-                // 单个配置失败不影响整体
-            }
-        }
-
-        // 4. 对站点做可达性探测
-        for (JSONObject s : merged.values()) {
-            probe(s);
-        }
-
-        // 5. 保存
-        try {
-            JSONObject data = new JSONObject();
-            data.put("version", 1);
-            data.put("lastUpdated", ts);
-            data.put("lastScan", scannedConfigs);
-            JSONArray out = new JSONArray();
-            for (JSONObject s : merged.values()) {
-                out.put(s);
-            }
-            data.put("sources", out);
-            saveSources(data);
-            if (Environment.needDebug) {
-                Environment.debug(IMEService.TAG, "movie sources updated: total=" + out.length()
-                        + ", configs=" + scannedConfigs);
-            }
-        } catch (JSONException ignored) {
-        }
+        return configs;
     }
 
     private boolean isRemoved(String status) {
         return "removed".equals(status) || "temporarily_unavailable".equals(status);
+    }
+
+    /** 增强探测（手动添加源用）：{api}?ac=detail&wd=test 响应须含 list 字段。
+     *  返回 null 表示通过，否则返回失败原因。 */
+    private String probeAdd(String api) {
+        String sep = api.contains("?") ? "&" : "?";
+        String url = api + sep + "ac=detail&wd=test";
+        try {
+            String body = HttpFetcher.fetch(url, null, 8000, 8000);
+            if (TextUtils.isEmpty(body)) {
+                return "无响应";
+            }
+            JSONObject root = new JSONObject(body);
+            if (!root.has("list")) {
+                return "响应不是标准影视接口格式（缺少 list 字段）";
+            }
+            return null;
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (msg != null && msg.contains("Blocked non-public address")) {
+                return "被安全策略拒绝（不支持内网/私有地址）";
+            }
+            if (msg != null && msg.contains("Unsupported protocol")) {
+                return "仅支持 http/https 协议";
+            }
+            return msg != null ? msg : "请求失败";
+        }
     }
 
     /** 站点可达性探测：GET api 根（短超时），成功即认为可达。 */

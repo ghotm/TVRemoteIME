@@ -931,8 +931,9 @@ function movieLoadSources() {
 			html += '<div class="movie-source-item' + cls + '">'
 				+ '<label class="checkbox-label movie-source-toggle-wrap"><input type="checkbox" class="movie-source-toggle" data-key="' + s.key + '"' + (s.enable ? ' checked' : '') + '><span>启用</span></label>'
 				+ '<span class="movie-source-name">' + s.name + '</span>'
-				+ '<span class="movie-source-status ' + statusCls + '">' + (s.status || '') + '</span>'
+				+ '<span class="movie-source-status ' + statusCls + '" title="' + (s.lastProbeError || '') + '">' + (s.status || '') + '</span>'
 				+ '<span class="movie-source-api" title="' + s.api + '">' + s.api + '</span>'
+				+ '<button type="button" class="movie-source-del" data-key="' + s.key + '">删除</button>'
 				+ '</div>';
 		});
 		$('#movieSourceList').html(html || '<div class="movie-empty">暂无源，请点击「检查更新源」</div>');
@@ -940,6 +941,18 @@ function movieLoadSources() {
 			var key = $(this).attr('data-key');
 			$.post('/movie/toggleSource', { key: key, enable: this.checked }, function() {
 				movieLoadSources();
+			});
+		});
+		$('.movie-source-del').off('click').on('click', function() {
+			var key = $(this).attr('data-key');
+			if (!confirm('确定删除该源？删除后不会被自动更新恢复（可重新添加或点「恢复内置源」）。')) { return; }
+			$.post('/movie/removeSource', { key: key }, function(data) {
+				if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = null; } }
+				if (data && data.code === 'ok') {
+					movieLoadSources();
+				} else {
+					alert(data && data.msg ? data.msg : '删除失败');
+				}
 			});
 		});
 	}).fail(function() {
@@ -951,7 +964,8 @@ function movieSearch() {
 	var wd = ($('#movieSearchInput').val() || '').trim();
 	if (!wd) { return; }
 	$('#movieSearchStatus').text('搜索中...');
-	$('#movieResults').removeClass('hidden');
+	$('#movieDetail').html('<div class="movie-empty">选择左侧影片查看详情</div>');
+	movieCurrentDetail = null;
 	$('#movieResultList').html('<div class="movie-empty">搜索中...</div>');
 	$.get('/movie/search', { wd: wd }, function(data) {
 		if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = null; } }
@@ -985,7 +999,7 @@ function movieSearch() {
 
 function movieDetail(source, id) {
 	$('#movieSearchStatus').text('加载详情...');
-	$('#movieDetail').removeClass('hidden').html('<div class="movie-empty">加载中...</div>');
+	$('#movieDetail').html('<div class="movie-empty">加载中...</div>');
 	$.get('/movie/detail', { source: source, id: id }, function(data) {
 		if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = null; } }
 		if (!data || data.code !== 0 || !data.detail) {
@@ -1004,8 +1018,7 @@ function movieDetail(source, id) {
 			+ (d.director ? '<div class="movie-detail-line">导演：' + d.director + '</div>' : '')
 			+ (d.actor ? '<div class="movie-detail-line">主演：' + d.actor + '</div>' : '')
 			+ (d.blurb ? '<div class="movie-detail-blurb">' + d.blurb + '</div>' : '')
-			+ '</div></div>'
-			+ '<div class="movie-detail-actions"><button type="button" class="btn-secondary" id="movieBackBtn">返回列表</button></div>';
+			+ '</div></div>';
 		var lines = d.lines || [];
 		$(lines).each(function() {
 			var line = this;
@@ -1018,10 +1031,6 @@ function movieDetail(source, id) {
 		});
 		html += '<div class="movie-detail-actions"><button type="button" class="btn-primary" id="moviePlaySystemBtn">用系统播放器播放</button></div>';
 		$('#movieDetail').html(html);
-		$('#movieBackBtn').on('click', function() {
-			$('#movieDetail').addClass('hidden').html('');
-			movieCurrentDetail = null;
-		});
 		$('.movie-ep').on('click', function() {
 			var url = $(this).attr('data-url');
 			var title = $(this).attr('data-name');
@@ -1036,6 +1045,9 @@ function movieDetail(source, id) {
 			if (!first) { alert('无播放地址'); return; }
 			$.post('/play', { playUrl: first.url, forceVod: true, useSystem: true, title: (movieCurrentDetail.name || '') + ' ' + (first.name || '') }, function() {});
 		});
+		// 窄屏堆叠模式：滚动到详情
+		var el = document.getElementById('movieDetail');
+		if (el && el.scrollIntoView) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 	}).fail(function() {
 		$('#movieDetail').html('<div class="movie-empty">详情请求失败</div>');
 	});
@@ -1065,6 +1077,58 @@ $('#movieUpdateBtn').on('click', function() {
 	}).fail(function() {
 		$('#movieSourcesStatus').text('更新请求失败');
 	});
+});
+// 子导航：搜索 / 源管理（不带 data-tab，独立处理，避免误触发顶部 tab 委托）
+$('.movie-subnav-btn').on('click', function() {
+	var target = $(this).attr('data-subnav');
+	$('.movie-subnav-btn').removeClass('active');
+	$(this).addClass('active');
+	if (target === 'source') {
+		$('#movieSearchView').addClass('hidden');
+		$('#movieSourceView').removeClass('hidden');
+		movieLoadSources();
+	} else {
+		$('#movieSearchView').removeClass('hidden');
+		$('#movieSourceView').addClass('hidden');
+	}
+});
+// 恢复内置源
+$('#movieReseedBtn').on('click', function() {
+	if (!confirm('恢复内置源（豪华资源、爱坤资源）？已存在或已启用的会保留。')) { return; }
+	$('#movieSourcesStatus').text('恢复中...');
+	$.post('/movie/reseed', null, function(data) {
+		if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = null; } }
+		if (data && data.code === 'ok') {
+			$('#movieSourcesStatus').text(data.msg || '已恢复');
+			movieLoadSources();
+		} else {
+			$('#movieSourcesStatus').text(data && data.msg ? data.msg : '恢复失败');
+		}
+	}).fail(function() { $('#movieSourcesStatus').text('恢复请求失败'); });
+});
+// 添加自定义源（增强探测通过才保存）
+$('#movieAddBtn').on('click', function() {
+	var name = ($('#movieAddName').val() || '').trim();
+	var api = ($('#movieAddApi').val() || '').trim();
+	if (!name || !api) { alert('请填写名称与接口地址'); return; }
+	$('#movieSourcesStatus').text('添加中（正在探测接口）...');
+	$.post('/movie/addSource', { name: name, api: api }, function(data) {
+		if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = null; } }
+		if (data && data.code === 'ok') {
+			$('#movieSourcesStatus').text(data.msg || '已添加');
+			$('#movieAddName').val('');
+			$('#movieAddApi').val('');
+			movieLoadSources();
+		} else {
+			var msg = data && data.msg ? data.msg : '添加失败';
+			$('#movieSourcesStatus').text(msg);
+			alert(msg);
+		}
+	}).fail(function() { $('#movieSourcesStatus').text('添加请求失败'); });
+});
+// 回到列表（窄屏堆叠模式显示）
+$('#movieBackTop').on('click', function() {
+	$('html, body').animate({ scrollTop: 0 }, 200);
 });
 // 切到影视仓 Tab 时加载源列表与播放状态
 $(document).on('click', 'button.tab[data-tab="movie"]', function() {
