@@ -76,9 +76,13 @@ public class HttpFetcher {
                 if (TextUtils.isEmpty(location)) {
                     throw new IOException("Redirect without Location at " + current);
                 }
-                // 相对/绝对解析
+                // 相对/绝对解析（base.toURI/resolve 会抛受检的 URISyntaxException）
                 URL base = new URL(current);
-                current = normalizeIdn(base.toURI().resolve(location).toString());
+                try {
+                    current = normalizeIdn(base.toURI().resolve(location).toString());
+                } catch (java.net.URISyntaxException e) {
+                    throw new IOException("Invalid redirect location: " + location, e);
+                }
                 checkPublicUrl(current);
                 continue;
             }
