@@ -267,7 +267,16 @@ public class IMEService extends InputMethodService implements View.OnClickListen
 				@Override
 				public void onTextReceived(String text) {
 					if (text != null) {
-						if(!isSendToAdbService(text))commitText(text);
+						// 优先走 IME commitText（主线程，支持中文）；
+						// 失败（IME 未激活 / 无输入连接）时回退 ADB 通道（仅 ASCII 可用）
+						handler.post(new Runnable() {
+							@Override
+							public void run() {
+								if (!commitText(text)) {
+									isSendToAdbService(text);
+								}
+							}
+						});
 					}
 				}
 			});

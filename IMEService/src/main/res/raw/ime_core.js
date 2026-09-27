@@ -360,14 +360,16 @@ $("#btnCls").on("click",function(){
 	postKeyCode($(this).attr("data-key"))
 })
 // 方向键 - 支持长按重复发送，同时兼容触摸与鼠标/遥控器（click）
-$(".direction-btn, .direction, #btnDel").on("mousedown touchstart",function(){
+$(".direction-btn, .direction, #btnDel").on("mousedown touchstart",function(e){
+		if(e.type === 'touchstart') e.preventDefault(); // 阻止合成 mouse 事件导致按键双发
 		var o=$(this);
 		suppressClickTime = +new Date() + 600;
 		$("#direction-btns").css({"background-position":o.attr("data-bp")});
 		postKeyActionCode(o.attr("data-key"), 1);
 		console.log("onkeydown:" + o.attr("data-key"));
 })
-$(".direction-btn, .direction, #btnDel").on("mouseup touchend touchcancel",function(){
+$(".direction-btn, .direction, #btnDel").on("mouseup touchend touchcancel",function(e){
+		if(e.type === 'touchend') e.preventDefault(); // 阻止合成 mouse 事件导致按键双发
 		var o=$(this);
 		postKeyActionCode(o.attr("data-key"), 2);
 		console.log("onkeyup:" + o.attr("data-key"));
@@ -384,7 +386,8 @@ $(".control-btn").on("click", function(){
 	console.log("control-btn click:" + keyCode);
 	postKeyCode(keyCode);
 })
-$(".otherbtn").on("mousedown touchstart", function() {
+$(".otherbtn").on("mousedown touchstart", function(e) {
+	if(e.type === 'touchstart') e.preventDefault(); // 阻止合成 mouse 事件导致按键双发
 	var o = $(this);
 	suppressClickTime = +new Date() + 600;
 	o.css({
