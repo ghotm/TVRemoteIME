@@ -196,71 +196,84 @@ public class LiveRequestProcesser implements RequestProcesser {
         // 锁外执行全部网络扫描（可能耗时数分钟），避免长时间持 liveSourcesLock 阻塞
         // handleSources / addSource / removeSource / merge 与前端轮询
         JSONArray scanned = new JSONArray();
+        JSONArray resources = null;
         try {
             String body = fetchResourcesJson();
-            JSONArray resources = new JSONObject(body).optJSONArray("resources");
-            if (resources != null) {
-                for (int i = 0; i < resources.length(); i++) {
-                    JSONObject res = resources.optJSONObject(i);
-                    if (res == null || !RESOURCES_CATEGORY_TVBOX.equals(res.optString("category"))) {
+            resources = new JSONObject(body).optJSONArray("resources");
+        } catch (Exception e) {
+            Log.e(TAG, "拉取 resources.json 失败，保留现有扫描源", e);
+        }
+        // 拉取失败或未包含 resources 数组时保留旧缓存，避免把现有扫描源整体清空
+        if (resources == null) {
+            Log.w(TAG, "resources.json 未包含 resources 数组，保留现有扫描源");
+            return;
+        }
+        for (int i = 0; i < resources.length(); i++) {
+            JSONObject res = resources.optJSONObject(i);
+            if (res == null || !RESOURCES_CATEGORY_TVBOX.equals(res.optString("category"))) {
+                continue;
+            }
+            String configName = res.optString("name", "配置");
+            String configUrl = res.optString("url", "");
+            if (TextUtils.isEmpty(configUrl)) {
+                continue;
+            }
+            try {
+                HttpFetcher.Fetched fetched = HttpFetcher.fetchBytes(configUrl, null, CONFIG_TIMEOUT_MS, CONFIG_TIMEOUT_MS);
+                String cfgBody = LiveListConverter.decode(fetched.data, fetched.charset);
+                JSONObject cfg = new JSONObject(cfgBody);
+                JSONArray lives = cfg.optJSONArray("lives");
+                if (lives == null) {
+                    continue;
+                }
+                for (int j = 0; j < lives.length(); j++) {
+                    JSONObject live = lives.optJSONObject(j);
+                    if (live == null) {
                         continue;
                     }
-                    String configName = res.optString("name", "配置");
-                    String configUrl = res.optString("url", "");
-                    if (TextUtils.isEmpty(configUrl)) {
+                    String name = live.optString("name", "直播源");
+                    String url = resolveUrl(configUrl, live.optString("url", ""));
+                    if (TextUtils.isEmpty(url)) {
                         continue;
                     }
-                    try {
-                        HttpFetcher.Fetched fetched = HttpFetcher.fetchBytes(configUrl, null, CONFIG_TIMEOUT_MS, CONFIG_TIMEOUT_MS);
-                        String cfgBody = LiveListConverter.decode(fetched.data, fetched.charset);
-                        JSONObject cfg = new JSONObject(cfgBody);
-                        JSONArray lives = cfg.optJSONArray("lives");
-                        if (lives == null) {
-                            continue;
-                        }
-                        for (int j = 0; j < lives.length(); j++) {
-                            JSONObject live = lives.optJSONObject(j);
-                            if (live == null) {
-                                continue;
-                            }
-                            String name = live.optString("name", "直播源");
-                            String url = resolveUrl(configUrl, live.optString("url", ""));
-                            if (TextUtils.isEmpty(url)) {
-                                continue;
-                            }
-                            JSONObject item = new JSONObject();
-                            item.put("key", sourceKey(url, "s"));
-                            item.put("name", name);
-                            item.put("configName", configName);
-                            item.put("url", url);
-                            item.put("error", "");
-                            item.put("custom", false);
-                            scanned.put(item);
-                        }
-                    } catch (Exception e) {
-                        JSONObject item = new JSONObject();
-                        try {
-                            item.put("key", "");
-                            item.put("name", "");
-                            item.put("configName", configName);
-                            item.put("url", "");
-                            item.put("error", shorten(e.getMessage()));
-                            item.put("custom", false);
-                            scanned.put(item);
-                        } catch (JSONException je) {
-                            Log.w(TAG, "构造失败源条目出错: " + configName, je);
-                        }
-                    }
+                    JSONObject item = new JSONObject();
+                    item.put("key", sourceKey(url, "s"));
+                    item.put("name", name);
+                    item.put("configName", configName);
+                    item.put("url", url);
+                    item.put("error", "");
+                    item.put("custom", false);
+                    scanned.put(item);
+                }
+            } catch (Exception e) {
+                JSONObject item = new JSONObject();
+                try {
+                    item.put("key", "");
+                    item.put("name", "");
+                    item.put("configName", configName);
+                    item.put("url", "");
+                    item.put("error", shorten(e.getMessage()));
+                    item.put("custom", false);
+                    scanned.put(item);
+                } catch (JSONException je) {
+                    Log.w(TAG, "构造失败源条目出错: " + configName, je);
                 }
             }
-        } catch (Exception e) {
-            Log.e(TAG, "拉取 resources.json 失败", e);
         }
-        // 锁内：合并自定义源（刷新不覆盖）并原子保存
+        // 锁内：合并自定义源（刷新不覆盖；与扫描同 url 的自定义源由扫描项代替，避免重复）并原子保存
         synchronized (liveSourcesLock) {
             JSONArray list = new JSONArray();
+            java.util.Set<String> scannedUrls = new java.util.HashSet<>();
             for (int i = 0; i < scanned.length(); i++) {
-                list.put(scanned.optJSONObject(i));
+                JSONObject o = scanned.optJSONObject(i);
+                if (o == null) {
+                    continue;
+                }
+                list.put(o);
+                String u = normalizeUrl(o.optString("url", ""));
+                if (!u.isEmpty()) {
+                    scannedUrls.add(u);
+                }
             }
             JSONObject oldCache = loadSourcesCache();
             if (oldCache != null) {
@@ -269,6 +282,10 @@ public class LiveRequestProcesser implements RequestProcesser {
                     for (int i = 0; i < oldList.length(); i++) {
                         JSONObject it = oldList.optJSONObject(i);
                         if (it != null && it.optBoolean("custom", false)) {
+                            String u = normalizeUrl(it.optString("url", ""));
+                            if (!u.isEmpty() && scannedUrls.contains(u)) {
+                                continue; // 同一地址已由扫描项提供，跳过自定义副本
+                            }
                             list.put(it);
                         }
                     }
