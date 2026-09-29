@@ -7,6 +7,8 @@ import com.android.tvremoteime.VideoPlayHelper;
 
 import java.util.Map;
 
+import org.json.JSONArray;
+
 import fi.iki.elonen.NanoHTTPD;
 
 /**
@@ -42,10 +44,13 @@ public class PlayRequestProcesser implements RequestProcesser {
         switch (fileName) {
             case "/play":
                 if (!TextUtils.isEmpty(params.get("playUrl"))) {
-                    VideoPlayHelper.playUrl(this.context, params.get("playUrl"), 0,
+                    VideoPlayHelper.playUrl(this.context, params.get("playUrl"),
+                        parseIntOrDefault(params.get("episodeIndex"), 0),
                         "true".equalsIgnoreCase(params.get("useSystem")),
                         "true".equalsIgnoreCase(params.get("forceVod")),
-                        params.get("title"));
+                        params.get("title"),
+                        parseStringArray(params.get("episodeUrls")),
+                        parseStringArray(params.get("episodeNames")));
                 }
                 return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.OK, "ok");
 
@@ -67,6 +72,35 @@ public class PlayRequestProcesser implements RequestProcesser {
             default:
                 return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.NOT_FOUND,
                     "Error 404, file not found.");
+        }
+    }
+
+    /** 解析 JSON 字符串数组（影视仓连播的剧集列表）；无效返回 null。 */
+    private static String[] parseStringArray(String json) {
+        if (TextUtils.isEmpty(json)) {
+            return null;
+        }
+        try {
+            JSONArray arr = new JSONArray(json);
+            String[] out = new String[arr.length()];
+            for (int i = 0; i < arr.length(); i++) {
+                out[i] = arr.optString(i, "");
+            }
+            return out;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 解析整数参数，失败返回默认值。 */
+    private static int parseIntOrDefault(String value, int defaultValue) {
+        if (TextUtils.isEmpty(value)) {
+            return defaultValue;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            return defaultValue;
         }
     }
 

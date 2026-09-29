@@ -61,15 +61,15 @@ public class VideoPlayHelper {
 
     /** 兼容旧调用：系统播放器。 */
     public static void playUrl(Context context, String url, int videoIndex, boolean useSystem) {
-        playUrl(context, url, videoIndex, useSystem, false, null);
+        playUrl(context, url, videoIndex, useSystem, false, null, null, null);
     }
 
     /**
-     * 播放视频。
+     * 播放视频（不含剧集连播）。
      *
      * @param context    Android context
      * @param url        Video URL to play
-     * @param videoIndex Video index（未用，保留兼容）
+     * @param videoIndex Video index（内置播放器用于连播定位；系统播放器忽略）
      * @param useSystem  true=系统播放器；false=内置 ijkplayer（默认）
      * @param forceVod   强制按「点播」处理（影视仓等 VOD 场景，避免 http 直链被误判为直播）；
      *                   仅对内置 ijkplayer 生效，系统播放器忽略
@@ -77,6 +77,18 @@ public class VideoPlayHelper {
      */
     public static void playUrl(Context context, String url, int videoIndex, boolean useSystem,
                                boolean forceVod, String title) {
+        playUrl(context, url, videoIndex, useSystem, forceVod, title, null, null);
+    }
+
+    /**
+     * 播放视频（影视仓连播：携带同线路剧集列表）。
+     *
+     * @param episodeUrls  同一线路的剧集地址列表（可选，null=不连播）
+     * @param episodeNames 与 episodeUrls 对应的剧集名称（可选）
+     */
+    public static void playUrl(Context context, String url, int videoIndex, boolean useSystem,
+                               boolean forceVod, String title,
+                               String[] episodeUrls, String[] episodeNames) {
         if (TextUtils.isEmpty(url)) {
             return;
         }
@@ -86,6 +98,7 @@ public class VideoPlayHelper {
         }
 
         if (useSystem) {
+            // 系统播放器通道不支持连播，仅播放单集
             playWithSystemPlayer(context, url);
             return;
         }
@@ -96,7 +109,7 @@ public class VideoPlayHelper {
             IjkVideoView.sLastError = null;
             IjkVideoView.sLastErrorTime = 0;
             XLVideoPlayActivity.intentTo(XLVideoPlayActivity.class, context, url, title,
-                    videoIndex, forceVod);
+                    videoIndex, forceVod, episodeUrls, episodeNames);
             markPlaying(url);
         } catch (Throwable t) {
             // ijk 启动异常（如 so 加载失败）：回退系统播放器

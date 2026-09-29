@@ -1053,12 +1053,12 @@ function movieDetail(source, id) {
 			+ (d.blurb ? '<div class="movie-detail-blurb">' + d.blurb + '</div>' : '')
 			+ '</div></div>';
 		var lines = d.lines || [];
-		$(lines).each(function() {
+		$(lines).each(function(li) {
 			var line = this;
 			html += '<div class="movie-line"><div class="movie-line-flag">' + (line.flag || '') + '</div><div class="movie-line-eps">';
-			$(line.eps || []).each(function() {
+			$(line.eps || []).each(function(ei) {
 				var ep = this;
-				html += '<button type="button" class="movie-ep" data-url="' + ep.url + '" data-name="' + (d.name || '') + ' ' + (ep.name || '') + '">' + (ep.name || '') + '</button>';
+				html += '<button type="button" class="movie-ep" data-line="' + li + '" data-ep="' + ei + '" data-url="' + ep.url + '" data-name="' + (d.name || '') + ' ' + (ep.name || '') + '">' + (ep.name || '') + '</button>';
 			});
 			html += '</div></div>';
 		});
@@ -1068,7 +1068,23 @@ function movieDetail(source, id) {
 			var url = $(this).attr('data-url');
 			var title = $(this).attr('data-name');
 			if (!url) { return; }
-			$.post('/play', { playUrl: url, forceVod: true, title: title }, function() {});
+			var payload = { playUrl: url, forceVod: true, title: title };
+			// 连续播放：把当前线路的剧集列表一并传给播放器（播完自动播放下一集）
+			if (movieCurrentDetail && movieCurrentDetail.lines) {
+				var li = parseInt($(this).attr('data-line'), 10);
+				var ei = parseInt($(this).attr('data-ep'), 10);
+				var line = movieCurrentDetail.lines[li];
+				var eps = (line && line.eps) ? line.eps : [];
+				var urls = [], names = [];
+				$(eps).each(function() {
+					urls.push(this.url || '');
+					names.push(this.name || '');
+				});
+				payload.episodeUrls = JSON.stringify(urls);
+				payload.episodeNames = JSON.stringify(names);
+				payload.episodeIndex = isNaN(ei) ? 0 : ei;
+			}
+			$.post('/play', payload, function() {});
 		});
 		$('#moviePlaySystemBtn').on('click', function() {
 			if (!movieCurrentDetail) { return; }

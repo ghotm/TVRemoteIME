@@ -282,3 +282,43 @@ _Locked via grill（4 项决策）— by Claude + 用户_
 - 自定义 UA/Referer、本地 m3u8 代理(Phase 2)。
 - 自定义源编辑(删除重建即可)、有效性定时检测、源排序。
 - 合并冲突时的智能去重/优选(按源分区,不做跨源同名合并)。。
+
+# Plan: 任务十一 — 影视仓连续剧集自动连播
+
+_Locked — by Claude + 用户（用户需求：“影视仓可能会存在多个连续剧集的情况,看看怎么样处理连续播放,实施完成请由oracle交叉审核”）_
+
+## Goal
+影视仓详情页某线路下包含多集时，从某一集开始播放后，**该集播完自动播放同一条线路的下一集**，直到最后一集播完退出。仅作用于影视仓（forceVod 点播）场景，不影响电视节目/直播与其他播放入口。
+
+## 现状（代码事实，已核实）
+- `XLVideoPlayActivity.onCompletion`（:400-402）仅 `finish()`；**没有任何连播逻辑**。
+- 播放器的“播单”依赖迅雷 `DownloadTask.getPlayList()`：对 http 直链（`mIsLiveMedia`）为**空列表**，且 `startTask()` 有 `if(taskId != 0L) return false`，**二次 startTask 必然失败** → 不能复用迅雷播单做切集。
+- 播放启动实际由 `MESSAGE_RESTART_PLAY`（:904-917）执行：`uri = taskInstance().getPlayUrl()` → `setVideoPath(uri)` → `seekTo(0)`。
+- `onPrepared`（:441-466）末尾 `start()`，因此 `mVideoView.setVideoPath(url)` 即可自动进入播放。
+- 前端 `movie-ep` 点击 → `POST /play {playUrl, forceVod:true, title}`（只传单集）；详情结构 `detail.lines[].eps[{name,url}]`。
+- `/play` → `PlayRequestProcesser` → `VideoPlayHelper.playUrl(6 参)` → `XLVideoPlayActivity.intentTo(6 参)`。
+
+## Approach
+1. **XLVideoPlayActivity**：
+   - 新增成员 `mEpisodeUrls` / `mEpisodeNames`（String[]）。
+   - `newIntent` / `intentTo` 新增 7 参重载（带 `episodeUrls`/`episodeNames`），旧重载委托 null（向后兼容）；`intentTo` 复用分支调用新增的 `setEpisodes(urls, names)` 同步剧集。
+   - `onCreate` 读取 `getIntent().getStringArrayExtra("episodeUrls"/"episodeNames")`。
+   - `onCompletion` 改为：`!isLive && mEpisodeUrls!=null && length>1 && mVideoIndex+1 < length` → `playEpisode(mVideoIndex+1)`；否则 `finish()`。
+   - 新增 `playEpisode(int index)`：更新 `mVideoIndex`/`mVideoPath`/`mVideoTitle`，`isLive = !forceVod`，`handler.post` 内 `stop()`（若在播）+ loading + **直接 `mVideoView.setVideoPath(下一集 url)`** + `seekTo(0)`（绕过迅雷 DownloadTask，避免二次 `startTask` 失败）。
+2. **VideoPlayHelper**：新增 8 参 `playUrl(..., forceVod, title, episodeUrls, episodeNames)`；原 6 参委托 null。系统播放器（useSystem=true）忽略剧集、保持单集。
+3. **PlayRequestProcesser `/play`**：解析 `episodeUrls`/`episodeNames`（JSON 数组字符串，`org.json.JSONArray`）与 `episodeIndex`；把 `episodeIndex` 作为 `videoIndex` 传入（供播放器 `mVideoIndex` 连播定位）。缺失时 null/0，行为与旧版一致。
+4. **ime_core.js**：`movie-ep` 渲染增加 `data-line`/`data-ep`；点击时把**当前线路**全部 `eps` 的 url/name 以 `JSON.stringify` 传给 `/play`（`episodeUrls`/`episodeNames`/`episodeIndex`）。
+5. **验证**：`node --check`；括号/全角粗检；提交 → 用户 push CI → 电视/模拟器实测连续播放。
+
+## Key decisions & tradeoffs
+- 仅连播**同一线路内**剧集；最后一集播完**退出**（不跨线路、不循环）。
+- 直链**直接 setVideoPath 切换**，不复用迅雷 `DownloadTask`（其 `startTask` 二次调用必失败）。
+- 完全向后兼容：无 episodes 参数 → 行为不变（旧 /play 调用、电视节目、直播均不受影响）。
+
+## Risks / open questions
+- 剧集很多时 `/play` 的 POST body 偏大（数百集约几十 KB，jQuery 会 urlencode），NanoHTTPD 可承载；若实测受限，后续改为“按 id 在服务端重取剧集”。
+- 个别集直链失效时 IJK 报错，本次**不自动跳过**失效集（Phase 2 可加）。
+- 播放器侧播单列表（playListView）仍为空（未接入自定义剧集），本次只做自动连播。
+
+## Out of scope
+- 电视端播单列表 UI 接入自定义剧集、跨线路连播、自动跳过失效集、Web 端连播开关、系统播放器连播。

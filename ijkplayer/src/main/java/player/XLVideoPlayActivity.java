@@ -74,6 +74,9 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
     private Uri mVideoUri;
     /** 强制按「点播」播放（影视仓等 VOD 场景）：忽略 isLiveMedia() 对 http(s) 直链的直播启发式。 */
     private boolean forceVod = false;
+    /** 影视仓剧集列表（同一线路）：用于播完自动播放下一集；null 表示不连播。 */
+    private String[] mEpisodeUrls = null;
+    private String[] mEpisodeNames = null;
 
     protected IjkVideoView mVideoView;
     private TableLayout mHudView;
@@ -189,6 +192,13 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
         intent.putExtra("forceVod", forceVod);
         return intent;
     }
+    /** 影视仓连播：额外携带同一线路的剧集列表（url / 名称）。 */
+    public static <T extends XLVideoPlayActivity> Intent newIntent(Class<T> cls, Context context, String videoPath, String videoTitle, int videoIndex, boolean forceVod, String[] episodeUrls, String[] episodeNames) {
+        Intent intent = newIntent(cls, context, videoPath, videoTitle, videoIndex, forceVod);
+        intent.putExtra("episodeUrls", episodeUrls);
+        intent.putExtra("episodeNames", episodeNames);
+        return intent;
+    }
     public static <T extends XLVideoPlayActivity> void intentTo(Class<T> cls, Context context, String videoPath, String videoTitle) {
         intentTo(cls, context, videoPath, videoTitle, 0, false);
     }
@@ -196,16 +206,21 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
         intentTo(cls, context, videoPath, videoTitle, videoIndex, false);
     }
     public static <T extends XLVideoPlayActivity> void intentTo(Class<T> cls, Context context, String videoPath, String videoTitle, int videoIndex, boolean forceVod) {
+        intentTo(cls, context, videoPath, videoTitle, videoIndex, forceVod, null, null);
+    }
+    /** 影视仓连播：额外携带同一线路的剧集列表，供 onCompletion 自动播放下一集。 */
+    public static <T extends XLVideoPlayActivity> void intentTo(Class<T> cls, Context context, String videoPath, String videoTitle, int videoIndex, boolean forceVod, String[] episodeUrls, String[] episodeNames) {
         if(isRunning && runningInstance != null){
             if(runningInstance.getClass() == cls) {
+                runningInstance.setEpisodes(episodeUrls, episodeNames);
                 runningInstance.resetVideoPath(videoPath, videoIndex, forceVod);
             }else{
                 runningInstance.finish();
-                context.startActivity(newIntent(cls, context, videoPath, videoTitle, videoIndex, forceVod));
+                context.startActivity(newIntent(cls, context, videoPath, videoTitle, videoIndex, forceVod, episodeUrls, episodeNames));
             }
         }
         else {
-            context.startActivity(newIntent(cls, context, videoPath, videoTitle, videoIndex, forceVod));
+            context.startActivity(newIntent(cls, context, videoPath, videoTitle, videoIndex, forceVod, episodeUrls, episodeNames));
         }
     }
 
@@ -228,6 +243,12 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    /** 更新剧集列表（复用播放器实例时，供连播使用）。 */
+    public void setEpisodes(String[] episodeUrls, String[] episodeNames) {
+        this.mEpisodeUrls = episodeUrls;
+        this.mEpisodeNames = episodeNames;
     }
 
     private void resetVideoPath(final String videoPath, final int videoIndex, final boolean newForceVod){
@@ -304,6 +325,8 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
         mVideoTitle = getIntent().getStringExtra("videoTitle");
         mVideoIndex = getIntent().getIntExtra("videoIndex", 0);
         forceVod = getIntent().getBooleanExtra("forceVod", false);
+        mEpisodeUrls = getIntent().getStringArrayExtra("episodeUrls");
+        mEpisodeNames = getIntent().getStringArrayExtra("episodeNames");
 
         Intent intent = getIntent();
         String intentAction = intent.getAction();
@@ -398,7 +421,53 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
 
     @Override
     public void onCompletion(IMediaPlayer iMediaPlayer) {
+        // 影视仓连播：点播场景下若存在同线路的下一集，自动继续播放；否则退出。
+        if (!isLive && mEpisodeUrls != null && mEpisodeUrls.length > 1
+                && mVideoIndex >= 0 && mVideoIndex + 1 < mEpisodeUrls.length) {
+            playEpisode(mVideoIndex + 1);
+            return;
+        }
         finish();
+    }
+
+    /**
+     * 播放指定剧集（影视仓连播）。
+     * 直链场景直接切换播放地址（不经迅雷下载任务，避免其 startTask 二次调用因 taskId!=0 失败）。
+     */
+    private void playEpisode(final int index) {
+        if (mEpisodeUrls == null || index < 0 || index >= mEpisodeUrls.length) {
+            finish();
+            return;
+        }
+        final String url = mEpisodeUrls[index];
+        if (TextUtils.isEmpty(url)) {
+            finish();
+            return;
+        }
+        mVideoIndex = index;
+        mVideoPath = url;
+        if (mEpisodeNames != null && index < mEpisodeNames.length && !TextUtils.isEmpty(mEpisodeNames[index])) {
+            mVideoTitle = mEpisodeNames[index];
+        }
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (mVideoView.isPlaying()) {
+                        stop();
+                    }
+                    $.id(R.id.app_video_loading).visible();
+                    // forceVod 场景强制按点播处理（避免 http 直链被 isLiveMedia 误判为直播）
+                    isLive = !forceVod;
+                    mVideoView.setVideoPath(url);
+                    seekTo(0);
+                    Log.d(TAG, "play next episode, index=" + mVideoIndex + ", url=" + url);
+                } catch (Throwable t) {
+                    Log.e(TAG, "切换下一集失败", t);
+                    finish();
+                }
+            }
+        });
     }
 
     @Override
