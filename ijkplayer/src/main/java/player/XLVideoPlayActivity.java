@@ -77,6 +77,8 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
     /** 影视仓剧集列表（同一线路）：用于播完自动播放下一集；null 表示不连播。 */
     private String[] mEpisodeUrls = null;
     private String[] mEpisodeNames = null;
+    /** 当前集是否发生播放错误：防止错误被 onCompletion 误当作「播完」而自动跳下一集。 */
+    private boolean mPlaybackErrored = false;
 
     protected IjkVideoView mVideoView;
     private TableLayout mHudView;
@@ -212,7 +214,7 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
     public static <T extends XLVideoPlayActivity> void intentTo(Class<T> cls, Context context, String videoPath, String videoTitle, int videoIndex, boolean forceVod, String[] episodeUrls, String[] episodeNames) {
         if(isRunning && runningInstance != null){
             if(runningInstance.getClass() == cls) {
-                runningInstance.setEpisodes(episodeUrls, episodeNames);
+                runningInstance.setEpisodes(episodeUrls, episodeNames, videoIndex);
                 runningInstance.resetVideoPath(videoPath, videoIndex, forceVod);
             }else{
                 runningInstance.finish();
@@ -245,10 +247,13 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
         }
     }
 
-    /** 更新剧集列表（复用播放器实例时，供连播使用）。 */
-    public void setEpisodes(String[] episodeUrls, String[] episodeNames) {
+    /** 更新剧集列表与当前集索引（复用播放器实例时，供连播使用）。 */
+    public void setEpisodes(String[] episodeUrls, String[] episodeNames, int index) {
         this.mEpisodeUrls = episodeUrls;
         this.mEpisodeNames = episodeNames;
+        if (index >= 0) {
+            this.mVideoIndex = index;
+        }
     }
 
     private void resetVideoPath(final String videoPath, final int videoIndex, final boolean newForceVod){
@@ -306,6 +311,8 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
         // forceVod=true（影视仓点播）：强制按点播处理，避免 http(s) 直链（m3u8/mp4）被
         // isLiveMedia 启发式误判为直播，导致 onResume seekTo(0) 丢进度、缓冲 3s 提前 resume。
         isLive = !forceVod && xlDownloadManager.taskInstance().isLiveMedia();
+        // 新一集开始播放：清除上一集的错误标记
+        mPlaybackErrored = false;
     }
 
     @Override
@@ -422,7 +429,7 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
     @Override
     public void onCompletion(IMediaPlayer iMediaPlayer) {
         // 影视仓连播：点播场景下若存在同线路的下一集，自动继续播放；否则退出。
-        if (!isLive && mEpisodeUrls != null && mEpisodeUrls.length > 1
+        if (!isLive && !mPlaybackErrored && mEpisodeUrls != null && mEpisodeUrls.length > 1
                 && mVideoIndex >= 0 && mVideoIndex + 1 < mEpisodeUrls.length) {
             playEpisode(mVideoIndex + 1);
             return;
@@ -459,6 +466,7 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
                     $.id(R.id.app_video_loading).visible();
                     // forceVod 场景强制按点播处理（避免 http 直链被 isLiveMedia 误判为直播）
                     isLive = !forceVod;
+                    mPlaybackErrored = false;
                     mVideoView.setVideoPath(url);
                     seekTo(0);
                     Log.d(TAG, "play next episode, index=" + mVideoIndex + ", url=" + url);
@@ -472,6 +480,9 @@ public class XLVideoPlayActivity extends Activity implements IMediaPlayer.OnPrep
 
     @Override
     public boolean onError(IMediaPlayer iMediaPlayer, int i, int i1) {
+        // 记录播放错误：IjkVideoView 在错误未被消费时会回调 onCompletion，
+        // 若不标记，会把「播放失败」误当作「播放完成」而自动跳到下一集。
+        mPlaybackErrored = true;
         return false;
     }
 
